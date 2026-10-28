@@ -1167,4 +1167,3 @@ private fun stateTextColor(state: String): Color = when (normalizedStatus(state)
         MaterialTheme.colorScheme.onSurfaceVariant
     }
 }
-
