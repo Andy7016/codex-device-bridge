@@ -8,6 +8,7 @@
 *.pfx
 *.keystore
 *.jks
+.rnd
 local.properties
 secrets/
 credentials/
