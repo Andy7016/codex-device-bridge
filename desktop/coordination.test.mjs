@@ -31,6 +31,11 @@ async function fixture(t, options = {}) {
         let result;
         if (msg.method === 'initialize') result = { clientId: 'synthetic-bridge' };
         if (msg.method === 'thread-owner-discovery') result = { supportsUntrustedAppInput: true };
+        if (msg.method === 'thread-owner-discovery' && options.noOwner) {
+          socket.write(encodeFrame({ type: 'response', method: msg.method, requestId: msg.requestId,
+            resultType: 'error', error: 'no-client-found' }));
+          continue;
+        }
         if (msg.method === 'thread-follower-load-complete-history') {
           socket.write(encodeFrame({ type: 'broadcast', method: 'thread-stream-state-changed',
             sourceClientId: options.badSource ? 'unrelated-client' : owner, version: options.badVersion ? 10 : 11,
@@ -66,6 +71,14 @@ test('coordination registers its own client type and observes without claiming o
   assert.equal((await f.client.snapshot('test')).conversationState.id, 'synthetic-thread');
   assert.equal(f.calls.find(c => c.method === 'initialize').params.clientType, 'codex-device-bridge');
   assert.equal(f.calls.some(c => /claim|start-turn|approval-decision/.test(c.method)), false);
+});
+
+test('ChatGPT owner probe preserves its kind and only performs read-only discovery', async t => {
+  const chatPolicy = structuredClone(policy); chatPolicy.targets.test.kind = 'chatgpt';
+  const f = await fixture(t, { policy: chatPolicy, noOwner: true });
+  assert.deepEqual(await f.client.probeOwner('test'), { ownerFound: false, reason: 'no-client-found' });
+  assert.deepEqual(f.calls.map(c => c.method), ['initialize', 'thread-owner-discovery']);
+  await assert.rejects(f.client.snapshot('test'), { code: 'operation_not_authorized' });
 });
 
 test('test-only policy update tightens approval and preserves unrelated settings', async t => {
@@ -191,4 +204,31 @@ test('independent text send constructs only a user message and inherits existing
   assert.deepEqual(call.params.turnStart.context, { inheritThreadSettings: true });
   assert.equal(call.params.turnStart.request.input[0].type, 'text');
   assert.equal(began, 1); assert.equal(accepted, 1);
+});
+
+test('persistent message identity is used only after the trusted final handoff gate', async t => {
+  const sendPolicy = structuredClone(policy);
+  sendPolicy.targets.test.rights.push('send');
+  sendPolicy.targets.test.allowedMessages = ['synthetic message'];
+  const f = await fixture(t, { policy: sendPolicy });
+  const messageId = '00000000-0000-4000-8000-000000000001';
+  let guardArgs;
+  await f.client.sendText('test', 'synthetic message', 'execution-1', {
+    begin(...args) { guardArgs = args; return () => {}; },
+  }, { clientUserMessageId: messageId, beforeDispatch: async () => {
+    assert.equal(f.calls.some(c => c.method === 'thread-follower-start-turn'), false);
+  } });
+  assert.equal(guardArgs[3], messageId);
+  assert.equal(f.calls.find(c => c.method === 'thread-follower-start-turn').params.turnStart.request.clientUserMessageId, messageId);
+});
+
+test('revocation at the final handoff prevents the runtime write', async t => {
+  const sendPolicy = structuredClone(policy);
+  sendPolicy.targets.test.rights.push('send');
+  sendPolicy.targets.test.allowedMessages = ['synthetic message'];
+  const f = await fixture(t, { policy: sendPolicy });
+  await assert.rejects(f.client.sendText('test', 'synthetic message', 'execution-2', {
+    begin() { return () => {}; },
+  }, { beforeDispatch: async () => { throw new Error('device_revoked'); } }), /device_revoked/);
+  assert.equal(f.calls.some(c => c.method === 'thread-follower-start-turn'), false);
 });

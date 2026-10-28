@@ -17,9 +17,10 @@ export class ActivationBarrier {
     this.directory = path.resolve(directory);
     mkdirSync(this.directory, { recursive: true });
   }
-  begin(operationId, targetId, prompt) {
+  begin(operationId, targetId, prompt, messageId) {
     if (typeof operationId !== 'string' || !/^[a-zA-Z0-9_-]{1,96}$/.test(operationId)) throw new Error('invalid_operation_id');
-    const digest = createHash('sha256').update(JSON.stringify([targetId, prompt])).digest('hex');
+    const fields = messageId === undefined ? [targetId, prompt] : [targetId, prompt, messageId];
+    const digest = createHash('sha256').update(JSON.stringify(fields)).digest('hex');
     const file = path.join(this.directory, operationId + '.attempt.json');
     try { durableNewFile(file, { digest, attemptedAt: Date.now(), state: 'attempted' }); }
     catch (error) {

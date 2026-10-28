@@ -1,6 +1,6 @@
-"""Loopback-only mTLS harness for the synthetic Journal.
+"""Loopback-only mTLS harness for a Journal or host-supplied typed service.
 
-No public bind, desktop adapter, relay, real account, or arbitrary command API.
+No public bind, relay, or arbitrary command API.
 TLS protects this test connection; end-to-end relay encryption is not implemented.
 """
 
@@ -78,7 +78,16 @@ class Handler(socketserver.BaseRequestHandler):
         if len(encoded) > MAX_FRAME:
             encoded = b'{"ok":false,"error":"response_too_large"}\n'
         try:
-            self.request.sendall(encoded)
+            if self.server.service is None:
+                self.request.sendall(encoded)
+            else:
+                # Serialize response release with host-side revocation. A
+                # revoked in-flight request receives no historical result.
+                try:
+                    with self.server.service.response_guard(device):
+                        self.request.sendall(encoded)
+                except Denied:
+                    self.request.sendall(b'{"ok":false,"error":"denied"}\n')
         except OSError:
             pass
 
@@ -87,13 +96,14 @@ class LoopbackServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = False
 
-    def __init__(self, address, context, identities, journal, adapter):
+    def __init__(self, address, context, identities, journal, adapter=None, *, service=None):
         if not ipaddress.ip_address(address[0]).is_loopback:
             raise ValueError("laboratory server requires a loopback address")
         if context.verify_mode != ssl.CERT_REQUIRED:
             raise ValueError("mutual TLS is required")
         self.context, self.identities = context, dict(identities)
         self.journal, self.adapter = journal, adapter
+        self.service = service
         self.workers = threading.BoundedSemaphore(4)
         self.fault_lock = threading.Lock()
         self.drop_ack_once = set()
@@ -126,6 +136,8 @@ class LoopbackServer(socketserver.ThreadingTCPServer):
             self.workers.release()
 
     def call(self, device, method, params):
+        if self.service is not None:
+            return self.service.call(device, method, params)
         if method == "submit":
             self.journal.submit(device, params["thread"], params["id"], params["payload"])
             return self.journal.dispatch(device, params["id"], self.adapter)

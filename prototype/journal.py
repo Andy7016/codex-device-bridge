@@ -1,4 +1,4 @@
-"""Durable recovery state for synthetic operations; never calls Codex or a shell."""
+"""Durable recovery state; execution adapters are supplied by the trusted host."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
+import uuid
 
 from .lease import WriterLease
 
@@ -52,6 +53,9 @@ class Journal:
             PRIMARY KEY(thread,seq));
           CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, thread TEXT,
             digest TEXT, expires REAL, state TEXT, decision TEXT);
+          CREATE TABLE IF NOT EXISTS runtime_bindings(device TEXT, operation TEXT,
+            target TEXT NOT NULL, message_id TEXT NOT NULL UNIQUE,
+            execution_id TEXT NOT NULL UNIQUE, PRIMARY KEY(device,operation));
         """)
         # The process-scoped writer lease makes startup recovery exclusive.
         with self.db:
@@ -71,6 +75,9 @@ class Journal:
     def provision(self, device, thread, rights=("read", "send", "approve")):
         """Test harness only; never exposed over the network."""
         with self.lock, self.db:
+            previous = self.db.execute("SELECT enabled FROM devices WHERE id=?", (device,)).fetchone()
+            if previous and not previous["enabled"]:
+                raise Conflict("revoked identity requires a new pairing identity")
             self.db.execute("INSERT INTO devices VALUES(?,1) ON CONFLICT(id) DO UPDATE SET enabled=1", (device,))
             self.db.execute("INSERT INTO grants VALUES(?,?,?) ON CONFLICT(device,thread) DO UPDATE SET rights=excluded.rights",
                             (device, thread, canonical(sorted(rights))))
@@ -78,6 +85,20 @@ class Journal:
     def revoke(self, device):
         with self.lock, self.db:
             self.db.execute("UPDATE devices SET enabled=0 WHERE id=?", (device,))
+            rows = self.db.execute("SELECT * FROM operations WHERE device=? AND state='accepted'", (device,)).fetchall()
+            for row in rows:
+                self.db.execute("UPDATE operations SET state='cancelled' WHERE device=? AND id=?", (device, row["id"]))
+                self._event(row["thread"], {"type": "operation", "device": device, "id": row["id"], "state": "cancelled"})
+
+    def authorize(self, device, thread, right):
+        with self.lock:
+            self._authorize(device, thread, right)
+
+    def authorize_device(self, device):
+        with self.lock:
+            row = self.db.execute("SELECT enabled FROM devices WHERE id=?", (device,)).fetchone()
+            if not row or not row["enabled"]:
+                raise Denied("device revoked")
 
     def _authorize(self, device, thread, right):
         row = self.db.execute("SELECT rights FROM grants JOIN devices ON devices.id=grants.device "
@@ -103,11 +124,15 @@ class Journal:
         return {"device": row["device"], "id": row["id"], "state": row["state"],
                 "result": json.loads(row["result"]) if row["result"] else None}
 
-    def submit(self, device, thread, operation_id, payload):
+    def submit(self, device, thread, operation_id, payload, *, runtime_target=None):
         if not isinstance(operation_id, str) or not 1 <= len(operation_id) <= 128:
             raise ValueError("invalid operation id")
         if not isinstance(payload, dict) or set(payload) != {"text"} or not isinstance(payload["text"], str):
-            raise ValueError("only synthetic text payloads are supported")
+            raise ValueError("only text payloads are supported")
+        if not payload["text"] or len(payload["text"].encode()) > 4096:
+            raise ValueError("invalid text length")
+        if runtime_target is not None and (not isinstance(runtime_target, str) or not runtime_target):
+            raise ValueError("invalid runtime target")
         digest = hashlib.sha256(canonical({"thread": thread, "payload": payload}).encode()).hexdigest()
         with self.lock, self.db:
             self._authorize(device, thread, "send")
@@ -115,9 +140,16 @@ class Journal:
             if existing:
                 if existing["digest"] != digest:
                     raise Conflict("operation id reused with a different request")
+                if runtime_target is not None:
+                    binding = self.db.execute("SELECT target FROM runtime_bindings WHERE device=? AND operation=?", (device, operation_id)).fetchone()
+                    if not binding or binding["target"] != runtime_target:
+                        raise Conflict("runtime target changed or binding missing")
                 return self._public(existing)
             self.db.execute("INSERT INTO operations VALUES(?,?,?,?,?,'accepted',NULL)",
                             (device, operation_id, thread, digest, canonical(payload)))
+            if runtime_target is not None:
+                self.db.execute("INSERT INTO runtime_bindings VALUES(?,?,?,?,?)",
+                                (device, operation_id, runtime_target, str(uuid.uuid4()), str(uuid.uuid4())))
             self._event(thread, {"type": "operation", "device": device, "id": operation_id, "state": "accepted"})
             return {"device": device, "id": operation_id, "state": "accepted", "result": None}
 
@@ -137,9 +169,10 @@ class Journal:
             encoded = canonical(result)
         except Exception:
             with self.lock, self.db:
-                self.db.execute("UPDATE operations SET state='unknown' WHERE device=? AND id=?", (device, operation_id))
-                self._event(row["thread"], {"type": "operation", "device": device, "id": operation_id, "state": "unknown"})
-            return {"device": device, "id": operation_id, "state": "unknown", "result": None}
+                changed = self.db.execute("UPDATE operations SET state='unknown' WHERE device=? AND id=? AND state='dispatching'", (device, operation_id)).rowcount
+                if changed:
+                    self._event(row["thread"], {"type": "operation", "device": device, "id": operation_id, "state": "unknown"})
+                return self._public(self._get_operation(device, operation_id))
         with self.lock, self.db:
             self.db.execute("UPDATE operations SET state='completed', result=? WHERE device=? AND id=?", (encoded, device, operation_id))
             self._event(row["thread"], {"type": "operation", "device": device, "id": operation_id, "state": "completed"})
@@ -150,6 +183,55 @@ class Journal:
             row = self._get_operation(device, operation_id)
             self._authorize(device, row["thread"], "read")
             return self._public(row)
+
+    def runtime_operation(self, device, operation_id):
+        """Host-only metadata. Network peers cannot choose runtime identities."""
+        with self.lock:
+            row = self._get_operation(device, operation_id)
+            self._authorize(device, row["thread"], "read")
+            binding = self.db.execute("SELECT * FROM runtime_bindings WHERE device=? AND operation=?", (device, operation_id)).fetchone()
+            return {**dict(row), "binding": dict(binding) if binding else None}
+
+    def authorize_runtime_thread(self, device, thread, target):
+        """A reused policy label cannot expose another target's old journal."""
+        with self.lock:
+            self._authorize(device, thread, "read")
+            mismatch = self.db.execute("SELECT 1 FROM operations o LEFT JOIN runtime_bindings b "
+                                      "ON b.device=o.device AND b.operation=o.id WHERE o.thread=? "
+                                      "AND (b.target IS NULL OR b.target<>?) LIMIT 1", (thread, target)).fetchone()
+            if mismatch:
+                raise Conflict("runtime stream target changed or binding missing")
+
+    def record_runtime_observation(self, device, operation_id, binding, observation):
+        """Only positive adapter evidence resolves unknown delivery; absence never does."""
+        with self.lock, self.db:
+            row = self._get_operation(device, operation_id)
+            self._authorize(device, row["thread"], "read")
+            current = self.db.execute("SELECT * FROM runtime_bindings WHERE device=? AND operation=?", (device, operation_id)).fetchone()
+            if not current or dict(current) != binding:
+                raise Conflict("runtime binding changed")
+            if row["state"] not in {"unknown", "completed"} or observation.get("observed") is not True:
+                return self._public(row)
+            if observation.get("messageId") != current["message_id"] or observation.get("targetId") != current["target"]:
+                raise Conflict("runtime observation identity mismatch")
+            if not isinstance(observation.get("turnId"), str) or not observation["turnId"]:
+                raise Conflict("missing original runtime turn")
+            if observation.get("turnStatus") not in {"inProgress", "completed", "failed", "interrupted"}:
+                raise Conflict("unsupported runtime turn status")
+            result = {"delivery": "observed", "turnId": observation["turnId"],
+                      "turnStatus": observation["turnStatus"], "evidence": "runtime-message-id"}
+            previous = json.loads(row["result"]) if row["result"] else None
+            if previous and previous.get("delivery") == "observed":
+                if previous["turnId"] != result["turnId"]:
+                    raise Conflict("runtime turn identity changed")
+                if previous["turnStatus"] in {"completed", "failed", "interrupted"}:
+                    return self._public(row)
+            if row["result"] == canonical(result):
+                return self._public(row)
+            self.db.execute("UPDATE operations SET state='completed',result=? WHERE device=? AND id=?", (canonical(result), device, operation_id))
+            self._event(row["thread"], {"type": "operation", "device": device, "id": operation_id,
+                                     "state": "completed", "delivery": "observed", "turnStatus": result["turnStatus"]})
+            return self._public(self._get_operation(device, operation_id))
 
     def sync(self, device, thread, cursor):
         if type(cursor) is not int or cursor < 0:

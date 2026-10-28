@@ -2,7 +2,7 @@
 
 本目录包含可运行的 Windows 本地适配代码。2026-10-28 已在两条用户授权的专用测试会话完成真实消息往返，并在 Codex 原运行时完成真实命令审批取消与单次允许。详细证据和限制见[实测报告](../docs/results/2026-10-28-desktop-runtime-control.md)。
 
-当前是固定安装版本的内部接口实验，没有接入 `prototype/` 的 mTLS 服务，没有远端监听，也没有 Android 客户端。运行前需具备同一 Windows 用户对桌面命名管道的访问权限；不要为此扩大管道 ACL 或以管理员账户常驻。
+当前是固定安装版本的内部接口实验。独立 Codex send/inspect 已接入[本机恢复主机](../prototype/DESKTOP.md)，有 loopback mTLS 监听，没有远端监听或 Android 客户端。运行前需具备同一用户对桌面管道的访问权限；不要扩大 ACL 或管理员常驻。
 
 ## 两条适配路径
 
@@ -21,10 +21,10 @@ App Tools 的 ChatGPT 目标参数必须省略 Codex 的 `hostId` 路由提示�
 仓库根目录，Node.js 22，无第三方依赖：
 
 ```powershell
-node --test desktop/adapter.test.mjs desktop/transport.test.mjs desktop/coordination.test.mjs
+node --test desktop/adapter.test.mjs desktop/transport.test.mjs desktop/coordination.test.mjs desktop/observation.test.mjs
 ```
 
-29 项测试只连接项目自建的 loopback 假路由或测试 transport，不连接真实桌面、不发送模型消息。测试包括跨会话授权、错误 owner/协议版本、过期调用上下文、动作变更、重复票据并发决策、丢失回包不重试以及单次允许不能变成持久规则。
+36 项 Node 测试只连接自建 loopback 假路由或测试 transport，不连接真实桌面、不发送模型消息。包括跨会话授权、错误 owner/版本、过期上下文、动作变更、并发票据、丢包不重试、禁止持久规则，以及恢复关联证据和最后交接检查。
 
 ## 本地受限策略
 
@@ -71,7 +71,7 @@ App Tools 的 `.local/desktop-caller-context.json` 使用真实发起任务的 `
 ## 恢复与安全边界
 
 - 发送前持久记录尝试；已尝试、冲突或损坏的操作记录均拒绝再次发送。确认丢失时先核对原历史，不能换新 ID 绕过未知结果。
-- 审批已尝试状态目前保存在单个本地连接内。跨进程、多控制端的原子决策、持久撤销和恢复日志尚未与真实适配器整合；不宣称全局 exactly-once。
+- 审批已尝试状态目前保存在单个本地连接内。发送已整合持久恢复和撤销；审批的跨进程、多控制端原子决策与持久日志仍未整合，不宣称全局 exactly-once。
 - 本地文件 fsync 不构成断电、磁盘损坏或备份回滚后的完整事务保证。实验权限文件也未部署 Windows ACL 管理、签名或加密存储。
 - 消息缓冲有 8 MiB 上限、请求超时和待处理数限制；不兼容的状态版本不能作为审批证据。更新补丁会使审批缓存失效，重新取完整快照。
 - 固定端点和 owner ID 校验不能抵御已经控制同一 Windows 用户的进程。后续需要主机账户隔离、安装权限和本地 IPC 身份防护；不能将本地管道直接转发到手机或公网。

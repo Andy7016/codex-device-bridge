@@ -103,7 +103,8 @@ export class CoordinationClient {
           const entry = this.pending.get(msg.requestId);
           if (!entry) continue;
           this.pending.delete(msg.requestId); clearTimeout(entry.timer);
-          if (msg.resultType !== 'success') entry.reject(new TransportFailure('owner_request_rejected', true));
+          if (msg.resultType !== 'success') entry.reject(new TransportFailure(
+            entry.method === 'thread-owner-discovery' && msg.error === 'no-client-found' ? 'owner_not_found' : 'owner_request_rejected', true));
           else if (msg.method !== entry.method || entry.owner && msg.handledByClientId !== entry.owner) entry.reject(new TransportFailure('owner_identity_mismatch', true));
           else entry.resolve(msg);
         } else if (msg.type === 'broadcast' && msg.method === 'thread-stream-state-changed') {
@@ -138,6 +139,22 @@ export class CoordinationClient {
       params: { conversationId: target.threadId, hostId: 'local', following: true } }));
     return owner;
   }
+  async probeOwner(label) {
+    // Discovery only: a ChatGPT policy entry never gains Codex write capability.
+    const targets = this.policy.targets ?? {};
+    if (!Object.hasOwn(targets, label)) throw new CapabilityError('target_not_authorized');
+    const target = targets[label];
+    if (!['codex', 'chatgpt'].includes(target.kind) || target.hostId !== 'local' ||
+        !target.rights?.includes('read') || typeof target.threadId !== 'string') throw new CapabilityError('operation_not_authorized');
+    try {
+      const reply = await this.#request('thread-owner-discovery', { hostId: 'local', conversationId: target.threadId });
+      if (typeof reply.handledByClientId !== 'string' || !reply.handledByClientId) throw new CapabilityError('owner_unavailable');
+      return { ownerFound: true };
+    } catch (error) {
+      if (error.code === 'owner_not_found') return { ownerFound: false, reason: 'no-client-found' };
+      throw error;
+    }
+  }
   async snapshot(label) {
     const target = this.#target(label, 'read');
     const owner = await this.discoverOwner(label);
@@ -162,21 +179,25 @@ export class CoordinationClient {
         after.conversationState.latestThreadSettings?.approvalsReviewer !== 'user') throw new CapabilityError('test_policy_not_verified');
     return { tightened: true };
   }
-  async sendText(label, prompt, operationId, activation) {
+  async sendText(label, prompt, operationId, activation,
+    { clientUserMessageId = randomUUID(), beforeDispatch = async () => {} } = {}) {
     const target = this.#target(label, 'send');
     if (typeof prompt !== 'string' || !prompt || Buffer.byteLength(prompt) > 8192 ||
         !target.allowedMessages?.includes(prompt)) throw new CapabilityError('message_not_authorized');
     if (!activation) throw new CapabilityError('durable_activation_guard_required');
+    if (typeof clientUserMessageId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientUserMessageId)) throw new CapabilityError('invalid_message_identity');
     const snapshot = await this.snapshot(label);
     if (snapshot.conversationState.threadRuntimeStatus?.type !== 'idle') throw new CapabilityError('thread_not_idle');
     const owner = this.owners.get(label);
-    const accepted = activation.begin(operationId, target.threadId, prompt);
+    const accepted = activation.begin(operationId, target.threadId, prompt, clientUserMessageId);
+    // The trusted host gates this final handoff after all snapshot awaits.
+    await beforeDispatch();
     try {
       // Construct text input locally. No model, permission, system instruction,
       // raw context or arbitrary turn settings are accepted from a controller.
       const reply = await this.#request('thread-follower-start-turn', { conversationId: target.threadId,
         turnStart: { request: { threadId: target.threadId,
-          input: [{ type: 'text', text: prompt, text_elements: [] }], clientUserMessageId: randomUUID() },
+          input: [{ type: 'text', text: prompt, text_elements: [] }], clientUserMessageId },
           context: { inheritThreadSettings: true } } }, owner);
       accepted();
       return { ownerReplied: true, outcomeShape: typeof reply.result?.result };

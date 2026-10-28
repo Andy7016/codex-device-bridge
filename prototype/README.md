@@ -1,6 +1,8 @@
 # 本地连接与恢复实验原型
 
-本目录提供可运行的 synthetic mock adapter、SQLite 状态日志和 loopback 双向 TLS 请求通路，用于验证恢复与授权语义。它没有接入桌面真实会话，不是可部署的中继或 Android 客户端。
+本目录原 synthetic 路径提供 mock adapter、SQLite 状态日志与 loopback 双向 TLS，用于隔离验证恢复和授权。同日新增[真实 Codex 恢复主机](DESKTOP.md)，复用日志和 TLS 接入原运行时，已完成真实崩溃/撤销测试。两者均为本地实验，没有可部署中继或 Android 客户端。
+
+以下组件和限制描述原 synthetic 路径；真实主机另见上述说明。真实主机拒绝网络 approve，不使用 synthetic 审批冒充真实决定。
 
 ## 运行
 
