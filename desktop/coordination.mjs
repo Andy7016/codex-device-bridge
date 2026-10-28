@@ -183,7 +183,7 @@ export class CoordinationClient {
     { clientUserMessageId = randomUUID(), beforeDispatch = async () => {} } = {}) {
     const target = this.#target(label, 'send');
     if (typeof prompt !== 'string' || !prompt || Buffer.byteLength(prompt) > 8192 ||
-        !target.allowedMessages?.includes(prompt)) throw new CapabilityError('message_not_authorized');
+        !(target.allowedMessages?.includes(prompt) || target.allowFreeText === true && Buffer.byteLength(prompt) <= 4096)) throw new CapabilityError('message_not_authorized');
     if (!activation) throw new CapabilityError('durable_activation_guard_required');
     if (typeof clientUserMessageId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientUserMessageId)) throw new CapabilityError('invalid_message_identity');
     const snapshot = await this.snapshot(label);

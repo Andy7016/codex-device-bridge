@@ -4,11 +4,13 @@
 
 ## 组件和前提
 
-- `desktop.py`：typed service、受控 Node 子进程，只开放 submit/status/sync/reconcile。
+- `desktop.py`：typed service、受控 Node 子进程，提供 submit/status/sync/reconcile/catalog/history。
 - `journal.py`：事务日志、单写入锁、原子保存原目标/消息 ID/内部执行 ID，撤销不复活，未分发队列 cancelled。
 - `child_job.py`：Windows Job Object 绑定 worker 寿命，无法建立则停止发送。
 - `host.py`：本机 mTLS server、本地 stdin 撤销/停止入口，无网络管理接口。
 - `desktop/runtime_worker.mjs`：只提供 send/inspect；快照等待结束后请求交接许可，按原 ID 与精确输入核对。
+
+Android v0.1 新增授权目录 catalog 和只读分页 history，worker 增加 history 投影。默认白名单文本，主机明确 `allowFreeText: true` 才允许普通文本，桌面权限保持原策略。客户端与连接文件见[Android 说明](../android/README.md)。
 
 要求 Windows、Python 3.11+、Node.js 22、同一用户对桌面管道的访问权限及明确授权策略。升级桌面后先停止写入重新验证，尚无版本自动门禁。不要扩大 ACL、关闭沙箱或管理员常驻来解决访问失败。
 

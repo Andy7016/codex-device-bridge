@@ -232,3 +232,18 @@ test('revocation at the final handoff prevents the runtime write', async t => {
   }, { beforeDispatch: async () => { throw new Error('device_revoked'); } }), /device_revoked/);
   assert.equal(f.calls.some(c => c.method === 'thread-follower-start-turn'), false);
 });
+
+test('ordinary text requires an explicit host flag and still constructs only text input', async t => {
+  const freePolicy = structuredClone(policy);
+  freePolicy.targets.test.rights.push('send');
+  freePolicy.targets.test.allowedMessages = [];
+  const denied = await fixture(t, { policy: freePolicy });
+  const activation = { begin() { return () => {}; } };
+  await assert.rejects(denied.client.sendText('test', 'ordinary text', 'free-1', activation), { code: 'message_not_authorized' });
+  freePolicy.targets.test.allowFreeText = true;
+  const permitted = await fixture(t, { policy: freePolicy });
+  await permitted.client.sendText('test', 'ordinary text', 'free-2', activation);
+  const call = permitted.calls.find(c => c.method === 'thread-follower-start-turn');
+  assert.equal(call.params.turnStart.request.input[0].text, 'ordinary text');
+  assert.deepEqual(call.params.turnStart.context, { inheritThreadSettings: true });
+});

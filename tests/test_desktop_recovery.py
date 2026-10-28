@@ -40,6 +40,11 @@ class Runtime:
     def inspect(self, op):
         return self.observation(op)
 
+    def history(self, label, target, before, limit):
+        self.prepare()
+        return {'messages': [{'id': 'synthetic-message', 'role': 'assistant', 'text': 'synthetic reply', 'status': 'completed'}],
+                'nextBefore': None, 'hasMore': False, 'runtimeStatus': 'idle', 'historyComplete': True}
+
 
 class DesktopRecovery(unittest.TestCase):
     def setUp(self):
@@ -191,6 +196,36 @@ class DesktopRecovery(unittest.TestCase):
             with self.assertRaises(DesktopUnavailable):
                 runtime.send(operation, guard)
         self.assertEqual(released, [])
+
+    def test_catalog_exposes_only_authorized_sessions_and_effective_send_right(self):
+        self.journal.provision('phone', 'codex', rights=('read',))
+        result = self.service.call('phone', 'catalog', {})
+        self.assertEqual(len(result['sessions']), 1)
+        self.assertFalse(result['sessions'][0]['canSend'])
+        self.assertEqual(result['sessions'][0]['allowedMessages'], [])
+        self.assertFalse(result['capabilities']['chatgpt'])
+        self.service.revoke('phone')
+        with self.assertRaises(Denied): self.service.call('phone', 'catalog', {})
+
+    def test_history_requires_scope_and_valid_bounded_page(self):
+        result = self.service.call('phone', 'history', {'thread': 'codex', 'before': None, 'limit': 6})
+        self.assertEqual(result['messages'][0]['text'], 'synthetic reply')
+        with self.assertRaises(Denied): self.service.call('phone', 'history', {'thread': 'other', 'before': None, 'limit': 6})
+        for limit in (True, 0, 9):
+            with self.assertRaises(ValueError): self.service.call('phone', 'history', {'thread': 'codex', 'before': None, 'limit': limit})
+
+    def test_revocation_during_history_read_suppresses_returned_content(self):
+        self.runtime.prepare = lambda: self.service.revoke('phone')
+        with self.assertRaises(Denied): self.service.call('phone', 'history', {'thread': 'codex', 'before': None, 'limit': 6})
+
+    def test_free_text_requires_explicit_host_flag_and_device_send_grant(self):
+        with self.assertRaises(Denied): self.service.enqueue('phone', 'codex', 'free', {'text': 'different text'})
+        policy = json.loads(json.dumps(POLICY)); policy['targets']['codex']['allowFreeText'] = True
+        self.service = self.make_service(policy)
+        self.service.enqueue('phone', 'codex', 'free', {'text': 'different text'})
+        self.assertTrue(self.service.call('phone', 'catalog', {})['sessions'][0]['freeText'])
+        self.journal.provision('desktop', 'codex', rights=('read',))
+        with self.assertRaises(Denied): self.service.enqueue('desktop', 'codex', 'free', {'text': 'different text'})
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-2026-10-28：独立 Codex follower 已接入 SQLite 恢复日志与本机 mTLS 服务，真实通过一次发送后的桥接崩溃、重启核对未知结果、重复提交和撤销验证。36 项 Python 与 36 项 Node 测试通过。此前两类原会话消息和 Codex 本地命令审批已验证；ChatGPT 合法常驻入口仍未找到，真实审批尚未接到持久网络服务。尚无 Android 客户端或生产中继。
+2026-10-28：Android v0.1 已生成可安装 APK，完成 API 35 模拟器上的原 Codex 消息、丢确认核对、加密记录和 TLS 验证。独立 follower、SQLite 恢复与 mTLS 主机已贯通。客户端支持授权会话、分页消息、文本和状态，当前连接使用模拟器或 USB 转发。ChatGPT 合法常驻入口、手机审批、完整项目管理与生产中继仍未接通。
 
 桌面入口属于当前安装版本内部协议，需按版本重新验证；不能视为已获得稳定公开 API。
 
@@ -32,6 +32,8 @@
 - [真实 Codex 恢复主机运行方式](prototype/DESKTOP.md)
 - [原运行时与恢复层贯通结果](docs/results/2026-10-28-integrated-recovery.md)
 - [ChatGPT 常驻入口调查](docs/results/2026-10-28-chatgpt-background-entry.md)
+- [Android APP 构建与连接](android/README.md)
+- [Android v0.1 验证结果](docs/results/2026-10-28-android-v01.md)
 - [本地恢复实验原型与运行方式](prototype/README.md)
 - [21 项测试结果及覆盖边界](docs/results/2026-10-28-recovery-lab.md)
 

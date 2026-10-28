@@ -74,7 +74,7 @@ class Handler(socketserver.BaseRequestHandler):
             response = {"ok": False, "error": "invalid_request"}
         except Exception:
             response = {"ok": False, "error": "internal_error"}
-        encoded = (canonical(response)+"\n").encode()
+        encoded = (json.dumps(response, ensure_ascii=False, allow_nan=False, separators=(",", ":"))+"\n").encode()
         if len(encoded) > MAX_FRAME:
             encoded = b'{"ok":false,"error":"response_too_large"}\n'
         try:

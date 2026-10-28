@@ -31,6 +31,8 @@ class NodeDesktopRuntime:
         request = {"action": action, "label": operation["thread"], "targetId": binding["target"],
                    "messageId": binding["message_id"], "executionId": binding["execution_id"],
                    "text": json.loads(operation["payload"])["text"]}
+        if action == "history":
+            request.update(operation["historyRequest"])
         encoded = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode()+b"\n"
         if len(encoded) > 8192:
             raise DesktopUnavailable("worker frame limit")
@@ -91,6 +93,8 @@ class NodeDesktopRuntime:
                         reply = read_reply()
                     finally:
                         cleanup()  # terminate/reap before releasing the device gate
+            if reply.get("ok") is True and action == "history" and isinstance(reply.get("history"), dict):
+                return reply["history"]
             if reply.get("ok") is not True or not isinstance(reply.get("observation"), dict):
                 raise DesktopUnavailable("desktop evidence unavailable")
             observation = reply["observation"]
@@ -119,10 +123,17 @@ class NodeDesktopRuntime:
     def inspect(self, operation):
         return self._exchange("inspect", operation)
 
+    def history(self, label, target, before, limit):
+        operation = {"thread": label, "payload": '{"text":""}',
+                     "binding": {"target": target, "message_id": None, "execution_id": None},
+                     "historyRequest": {"before": before, "limit": limit}}
+        return self._exchange("history", operation)
+
 
 class DesktopRecoveryService:
     METHODS = {"submit": {"thread", "id", "payload"}, "status": {"id"},
-               "sync": {"thread", "cursor"}, "reconcile": {"id"}}
+               "sync": {"thread", "cursor"}, "reconcile": {"id"},
+               "catalog": set(), "history": {"thread", "before", "limit"}}
 
     def __init__(self, journal, runtime, policy, *, devices):
         self.journal, self.runtime = journal, runtime
@@ -146,8 +157,13 @@ class DesktopRecoveryService:
         target = self._target(operation["thread"])
         if not operation["binding"] or operation["binding"]["target"] != target["threadId"]:
             raise Conflict("runtime target changed")
-        if json.loads(operation["payload"])["text"] not in target.get("allowedMessages", []):
+        if not self._message_allowed(target, json.loads(operation["payload"])["text"]):
             raise Denied("message not authorized")
+
+    @staticmethod
+    def _message_allowed(target, text):
+        return isinstance(text, str) and 0 < len(text.encode()) <= 4096 and (
+            text in target.get("allowedMessages", []) or target.get("allowFreeText") is True)
 
     @contextmanager
     def response_guard(self, device):
@@ -163,7 +179,7 @@ class DesktopRecoveryService:
     def enqueue(self, device, label, operation_id, payload):
         """Local/submit admission. Persists immutable binding with acceptance."""
         target = self._target(label)
-        if not isinstance(payload, dict) or payload.get("text") not in target.get("allowedMessages", []):
+        if not isinstance(payload, dict) or not self._message_allowed(target, payload.get("text")):
             raise Denied("message not authorized")
         if not {"read", "send"}.issubset(target.get("rights", [])):
             raise Denied("host send permission missing")
@@ -210,6 +226,37 @@ class DesktopRecoveryService:
         if not isinstance(params, dict) or set(params) != self.METHODS[method]:
             raise ValueError("unexpected request fields")
         self.journal.authorize_device(device)
+        if method == "catalog":
+            sessions = []
+            for label, target in self.policy.get("targets", {}).items():
+                if target.get("kind") != "codex" or target.get("hostId") != "local" or "read" not in target.get("rights", []):
+                    continue
+                try:
+                    self.journal.authorize(device, label, "read")
+                except Denied:
+                    continue
+                can_send = "send" in target.get("rights", [])
+                try:
+                    self.journal.authorize(device, label, "send")
+                except Denied:
+                    can_send = False
+                sessions.append({"label": label, "title": str(target.get("displayName", "Codex 会话"))[:80],
+                                 "kind": "codex", "canSend": can_send,
+                                 "allowedMessages": target.get("allowedMessages", [])[:8] if can_send else [],
+                                 "freeText": can_send and target.get("allowFreeText") is True})
+            with self.response_guard(device):
+                return {"sessions": sessions, "capabilities": {"chatgpt": False, "approvals": False, "settings": False, "files": False}}
+        if method == "history":
+            target = self._target(params["thread"])
+            self.journal.authorize(device, params["thread"], "read")
+            if type(params["limit"]) is not int or not 1 <= params["limit"] <= 8 or params["before"] is not None and (not isinstance(params["before"], str) or len(params["before"]) > 128):
+                raise ValueError("invalid history page")
+            if "read" not in target.get("rights", []):
+                raise Denied("host read permission missing")
+            result = self.runtime.history(params["thread"], target["threadId"], params["before"], params["limit"])
+            with self.response_guard(device):
+                self.journal.authorize(device, params["thread"], "read")
+                return result
         if method == "submit":
             self.enqueue(device, params["thread"], params["id"], params["payload"])
             return self.dispatch(device, params["id"])

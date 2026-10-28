@@ -33,6 +33,7 @@ captures/
 .idea/
 .vscode/
 .gradle/
+.kotlin/
 **/build/
 node_modules/
 dist/
