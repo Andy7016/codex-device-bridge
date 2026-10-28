@@ -1,6 +1,6 @@
 # 架构与待验证决策
 
-状态：提议；2026-10-28。尚未实施或验证。
+状态：2026-10-28。整体架构仍为提议；独立恢复实验与固定版本桌面适配已分别验证，尚未串接成远端产品。
 
 ## 组件与边界
 
@@ -10,7 +10,7 @@ flowchart LR
   R <-->|Host initiated outbound connection| B[Windows bridge]
   B --> P[Authorization and operation validation]
   P --> C[Codex adapter]
-  P --> G[Desktop ChatGPT adapter: capability pending]
+  P --> G[ChatGPT adapter: active desktop context required]
   C --> D[Existing desktop runtime]
   G --> D
 ```
@@ -24,7 +24,11 @@ flowchart LR
 
 ## 接口边界
 
-官方 app-server 文档提供 Codex thread、turn、审批和 model/list 能力。但桌面同一运行时接入、ChatGPT 会话及桌面项目管理仍待验证。优先受支持的本地接口；不以数据库写入、复制令牌或注入桌面进程作为默认适配手段。
+官方 app-server 文档提供 Codex thread、turn、审批和 model/list 能力。新启动的服务不代表桌面原运行时；本机进一步验证了桌面 App Tools 和 owner/follower 两条内部路径，详见[真实控制报告](results/2026-10-28-desktop-runtime-control.md)。优先受支持的本地接口；不以数据库写入、复制令牌或注入桌面进程作为默认适配手段。
+
+当前 Codex follower 可独立读取快照、发文本和处理限定命令审批。ChatGPT 历史和发消息可通过 App Tools，但依赖真实有效的活动桌面任务上下文。两者分别实现，不能用 Codex 成功替代 ChatGPT 常驻验证。内部协议固定安装版本，更新后需重新验证；尚无安装版本自动门禁。
+
+桌面适配代码目前仅供本地授权实验，没有连接到 `prototype/` 的 mTLS listener。整合时由恢复层管理设备身份、会话授权、单写入和持久操作记录，再调用 typed adapter；不能直接将内部命名管道代理给手机。
 
 Bridge 暴露明确的业务操作，不提供任意 RPC、任意 shell 或任意路径文件访问。接口授权与模型运行时权限分别落实；允许发消息本身也可能启动有外部副作用的工具。
 

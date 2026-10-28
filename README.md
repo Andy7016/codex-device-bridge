@@ -4,7 +4,9 @@
 
 ## 项目状态
 
-2026-10-28：已完成桌面接口只读实测，以及可运行的本地恢复实验原型；21 项合成恢复/攻击测试通过。桌面 Codex 历史可读，ChatGPT 原会话、桌面项目身份映射和活动任务接管仍有缺口。尚无 Android 客户端或生产中继。
+2026-10-28：已完成 Codex 与 ChatGPT 原测试会话的真实消息往返、桌面项目读取，以及 Codex 原运行时命令审批取消与单次允许。Codex follower 可以独立于活动代理任务发送消息；ChatGPT 仍依赖真实有效的桌面任务上下文。29 项桌面适配测试与 21 项恢复/攻击测试通过。尚无 Android 客户端或生产中继，真实桌面适配层尚未与恢复实验服务串接。
+
+桌面入口属于当前安装版本内部协议，需按版本重新验证；不能视为已获得稳定公开 API。
 
 优先验证桌面上同一条会话的接入能力，再实施连接与恢复原型，最后开发 Android 界面。单独启动一个 Codex 实例不能作为已接入当前桌面会话的证明。
 
@@ -24,6 +26,9 @@
 - [桌面接口验证](docs/desktop-capability-validation.md)
 - [连接、恢复与攻击测试计划](docs/validation-plan.md)
 - [桌面接入实测结果](docs/results/2026-10-28-desktop-probe.md)
+- [原运行时真实消息与审批结果](docs/results/2026-10-28-desktop-runtime-control.md)
+- [桌面适配代码与运行边界](desktop/README.md)
+- [专用会话测试包](docs/desktop-test-packet.md)
 - [本地恢复实验原型与运行方式](prototype/README.md)
 - [21 项测试结果及覆盖边界](docs/results/2026-10-28-recovery-lab.md)
 
