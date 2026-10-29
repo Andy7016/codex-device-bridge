@@ -11,6 +11,7 @@ from cryptography.exceptions import InvalidSignature
 from prototype.desktop import DesktopRecoveryService, NodeDesktopRuntime
 from prototype.journal import Conflict, Denied, Journal
 from .pairing import Pairing
+from .configuration import load_configuration
 from .security import certificate, fingerprint, private_address, public_id, server_context, unprotect
 from .wire import TLSStream, read_frame, relay_connect, send_frame
 
@@ -19,7 +20,8 @@ class Host:
     def __init__(self, config_path, *, runtime_factory=NodeDesktopRuntime):
         self.config_path = Path(config_path).resolve()
         self.directory = self.config_path.parent
-        self.config = json.loads(self.config_path.read_text(encoding='utf8'))
+        self.config, policy_path = load_configuration(self.config_path)
+        self.config['policy'] = str(policy_path)
         self.identity = self.config['identity']
         cert = certificate(self.identity['serverCertificatePem'])
         host_id = self.identity['hostId']
@@ -148,7 +150,8 @@ class Host:
                 tracked.append(stream)
                 self._track(stream)
             try:
-                self.status = '正在等待手机连接'
+                if not failures:
+                    self.status = '正在连接中继 · 后台处理'
                 outer = relay_connect(self.identity['relay'], {'version': 1, 'role': 'host', 'hostId': self.identity['hostId'], 'token': self.private['relayToken']}, on_socket=track)
                 failures = 0
                 if self.stop_event.is_set():
@@ -183,7 +186,9 @@ class Host:
             self.listener.bind((str(ip), address['port']))
             self.listener.listen(2)
             self.listener.settimeout(1)
-        for target in ([self._relay_worker]*2 + ([self._direct_worker] if endpoints else [])):
+        relay_workers = [self._relay_worker]*2 if self.identity.get('relay') else []
+        self.status = '未配置中继 · 本机已初始化' if not relay_workers else '中继连接准备中'
+        for target in (relay_workers + ([self._direct_worker] if endpoints else [])):
             thread = threading.Thread(target=target, daemon=True)
             self.threads.append(thread)
             thread.start()

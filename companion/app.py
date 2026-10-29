@@ -8,12 +8,15 @@ from tkinter import filedialog, messagebox, ttk
 import qrcode
 from PIL import ImageTk
 from .host import Host
+from .configuration import remember_configuration, remembered_configuration
+from .startup import SettingsDialog, StartupWizard, explain, startup_directory
 
 
 class Window:
     def __init__(self, root, host):
         self.root, self.host, self.invitation = root, host, None
         self.closing = False
+        self.reopen_config = None
         root.title('Device Bridge · 电脑连接')
         root.geometry('1100x950')
         body = ttk.Frame(root, padding=20)
@@ -22,6 +25,13 @@ class Window:
         ttk.Label(body, text='扫码后核对两端六位数字，在本机选择允许访问的范围。').pack(anchor='w', pady=8)
         self.status = ttk.Label(body)
         self.status.pack(anchor='w')
+        controls = ttk.Frame(body)
+        controls.pack(fill='x', pady=5)
+        ttk.Button(controls, text='连接与会话范围设置', command=self.settings).pack(side='left')
+        ttk.Button(controls, text='新建配置', command=self.new_configuration).pack(side='left', padx=8)
+        ttk.Button(controls, text='打开其他 host.json', command=self.open_configuration).pack(side='left')
+        if not host.identity.get('relay'):
+            ttk.Label(body, text='本机身份已准备好。尚未配置中继，暂不能扫码连接；可先保留配置，稍后补填。', wraplength=950).pack(anchor='w', pady=6)
         panel = ttk.Frame(body)
         panel.pack(fill='x', pady=12)
         left, right = ttk.Frame(panel), ttk.Frame(panel)
@@ -31,7 +41,9 @@ class Window:
         self.qr.pack()
         self.countdown = ttk.Label(left)
         self.countdown.pack(pady=5)
-        ttk.Button(left, text='生成新的配对二维码', command=self.new_invite).pack(fill='x')
+        self.invite_button = ttk.Button(left, text='生成新的配对二维码', command=self.new_invite,
+                                       state='normal' if host.identity.get('relay') else 'disabled')
+        self.invite_button.pack(fill='x')
         ttk.Button(left, text='取消当前邀请', command=self.cancel_invite).pack(fill='x', pady=4)
         ttk.Label(right, text='待确认手机', font=('Microsoft YaHei UI', 12, 'bold')).pack(anchor='w')
         self.pending = tk.Listbox(right, height=3, exportselection=False)
@@ -47,6 +59,8 @@ class Window:
             ttk.Checkbutton(row, text=str(target.get('displayName', label))[:30], variable=read).pack(side='left')
             ttk.Checkbutton(row, text='发送', variable=send, state='normal' if 'send' in target.get('rights', []) else 'disabled').pack(side='right')
             self.grants[label] = (read, send)
+        if not self.grants:
+            ttk.Label(right, text='尚未导入会话策略，当前不授权访问任何会话。\n可在“连接与会话范围设置”中导入已有策略。', wraplength=430).pack(anchor='w', pady=8)
         ttk.Button(right, text='数字一致，确认配对', command=self.approve).pack(fill='x', pady=(12, 4))
         ttk.Button(right, text='拒绝所选请求', command=self.deny).pack(fill='x')
         ttk.Label(body, text='已配对设备', font=('Microsoft YaHei UI', 12, 'bold')).pack(anchor='w', pady=(12, 4))
@@ -54,6 +68,7 @@ class Window:
         self.devices.pack(fill='x')
         ttk.Button(body, text='撤销所选设备', command=self.revoke).pack(anchor='e', pady=8)
         ttk.Label(body, text='电脑身份：'+host.identity['hostId'][:24]+'…').pack(anchor='w')
+        ttk.Label(body, text='配置：'+str(host.config_path), wraplength=1000).pack(anchor='w', pady=4)
         ttk.Label(body, text='关闭窗口会停止服务。中继仅转发端到端加密流量。').pack(anchor='w', pady=8)
         root.protocol('WM_DELETE_WINDOW', self.close)
         self.pending_rows, self.device_rows = [], []
@@ -69,6 +84,28 @@ class Window:
             self.qr.configure(image=self.photo, text='')
         except Exception:
             messagebox.showerror('无法创建邀请', '本机身份或配对存储不可用。')
+
+    def settings(self):
+        dialog = SettingsDialog(self.root, self.host.config_path)
+        self.root.wait_window(dialog.window)
+        if dialog.saved:
+            self.reopen_config = self.host.config_path
+            self.close()
+
+    def new_configuration(self):
+        self.reopen_config = ''  # return to the wizard after releasing the old journal lease
+        self.close()
+
+    def open_configuration(self):
+        from .configuration import load_configuration
+        path = filedialog.askopenfilename(title='打开完整配置目录中的 host.json', filetypes=[('本机配置', '*.json')])
+        if path:
+            try:
+                load_configuration(path)
+                self.reopen_config = path
+                self.close()
+            except Exception as error:
+                messagebox.showerror('配置未导入', explain(error), parent=self.root)
 
     def cancel_invite(self):
         if self.invitation:
@@ -142,16 +179,33 @@ class Window:
             return
         self.closing = True
         self.root.withdraw()
+        completed = threading.Event()
+        errors = []
         def finish():
-            self.host.close()
-            self.root.after(0, self.root.destroy)
+            try:
+                self.host.close()
+            except Exception as error:
+                errors.append(error)
+            finally:
+                completed.set()
+        def poll():
+            if not completed.is_set():
+                self.root.after(50, poll)
+                return
+            if errors:
+                self.reopen_config = None
+                messagebox.showerror('服务关闭未完成', '未切换配置。请保留原数据并重启程序检查连接状态。', parent=self.root)
+            self.root.destroy()
         threading.Thread(target=finish, daemon=False).start()
+        self.root.after(50, poll)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config')
     parser.add_argument('--self-test', action='store_true', help='synthetic packaging smoke test; starts no network')
+    parser.add_argument('--self-test-data', help='new task-owned directory for the offline startup smoke test')
+    parser.add_argument('--fresh-start', action='store_true', help='show setup instead of the remembered configuration')
     args = parser.parse_args()
     if args.self_test:
         from pathlib import Path
@@ -164,24 +218,61 @@ def main():
         image = qrcode.make('synthetic packaging test')
         ImageTk.PhotoImage(image.get_image(), master=root)
         root.update()
+        if args.self_test_data:
+            directory = Path(args.self_test_data).resolve()
+            wizard = StartupWizard(root, directory)
+            wizard.output.set(str(directory/'computer'))
+            wizard.create()
+            assert wizard.selected == directory/'computer'/'host.json'
+            wizard.body.destroy()
+            host = Host(wizard.selected)
+            try:
+                host.start()
+                assert not host.threads
+                remember_configuration(directory, wizard.selected)
+                assert remembered_configuration(directory) == wizard.selected
+                window = Window(root, host)
+                assert window.invite_button.instate(['disabled'])
+                root.update()
+                window.closing = True
+            finally:
+                host.close()
         root.destroy()
         return
-    if not args.config:
+    directory = startup_directory()
+    selected = args.config or (None if args.fresh_start else remembered_configuration(directory))
+    while True:
         root = tk.Tk()
-        root.withdraw()
-        args.config = filedialog.askopenfilename(title='选择本机连接配置 host.json', filetypes=[('Device Bridge 配置', '*.json')])
-        root.destroy()
-        if not args.config:
-            return
-    host = Host(args.config)
-    try:
-        host.start()
-        root = tk.Tk()
-        Window(root, host)
+        if not selected:
+            wizard = StartupWizard(root, directory)
+            root.mainloop()
+            selected = wizard.selected
+            if not selected:
+                root.destroy()
+                return
+            wizard.body.destroy()
+        host = None
+        try:
+            host = Host(selected)
+            host.start()
+        except Exception as error:
+            if host:
+                host.close()
+            messagebox.showerror('配置未打开', explain(error), parent=root)
+            root.destroy()
+            selected = None
+            continue
+        try:
+            remember_configuration(directory, selected)
+        except OSError:
+            messagebox.showinfo('配置已打开', '无法记住路径；下次可使用“打开已有 host.json”重新导入。', parent=root)
+        window = Window(root, host)
         root.mainloop()
-    finally:
         if not host.stop_event.is_set():
             host.close()
+        selected = window.reopen_config
+        if selected is None:
+            return
 
 
 if __name__ == '__main__':

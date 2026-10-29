@@ -29,6 +29,8 @@ class Pairing:
                 service.register_device(row['device'])
 
     def invite(self):
+        if not self.identity.get('relay'):
+            raise ValueError('relay_not_configured')
         with self.journal.lock, self.journal.db:
             self.journal.db.execute("UPDATE pairing_invites SET state='denied' WHERE state IN ('issued','challenge','pending')")
             self.journal.db.execute('DELETE FROM pairing_invites WHERE expires<?', (int(self.clock())-86400,))

@@ -1,21 +1,29 @@
-# Device Bridge 电脑端与中继 v0.2
+# Device Bridge 电脑端 v0.2.1 / 中继 v0.2
 
 扫码绑定电脑公钥身份，手机自行生成 AndroidKeystore 私钥；电脑与手机主动连接中继，内部再建立 TLS。已配对设备和授权保存于电脑恢复日志，同一身份换 IP 或切换路由无需重新配对。当前版本为自用原型：尚未部署公网服务，也未完成实体手机与真实 VPN 组合验证。
 
 ## 电脑端
 
-本机生成的便携目录为 `.local/distribution/DeviceBridge-Companion/`，运行其中的 `DeviceBridge-Companion.exe`。保留整个目录，双击后选择预先准备的 `host.json`。这是普通窗口程序，关闭窗口会停止服务；尚无系统托盘、安装器、开机启动或更新服务。程序未作发布者代码签名。真实 Codex 会话操作还需要电脑上可用的 Node.js 和原桌面应用。
+新版便携目录为 `.local/distribution/companion-0.2.1/DeviceBridge-Companion/`，运行其中的 `DeviceBridge-Companion.exe`。保留整个目录。首次启动无需已有 `host.json`、策略或可达中继；会显示初始化向导。程序未作发布者代码签名，是关闭窗口即停止服务的普通窗口程序，尚无托盘、安装器、自启动或更新服务。初始化无需Node.js；真实Codex会话操作仍需要电脑上的Node.js和原桌面应用。
 
-首次准备身份（开发环境）：
+首次使用：填写电脑名称和新的配置目录 → 保持“稍后配置中继” → 策略可以留空 → 点击“创建 host.json 并打开”。程序会生成完整身份目录并自动载入主界面，同时记住路径。下次启动自动载入；需要再次打开向导可使用 `--fresh-start`，或在主界面点击“新建配置”。
+
+未配置中继时不启动出站连接、默认也不监听局域网端口；配对二维码按钮不可用。主界面显示“未配置中继 · 本机已初始化”。策略留空会生成 `{"targets":{}}`，不授权访问任何会话。有效但不可达的中继不会阻止打开主界面，连接会在后台有界重试。
+
+后续在“连接与会话范围设置”中补填中继地址、端口、可选自签名公开证书，以及可选会话策略。保存时备份旧host.json，保留电脑身份、私钥、中继登记凭据、设备授权和恢复日志，然后重新载入。已有自签名证书留空时沿用；明确选择系统信任时才取消该固定证书。
+
+“打开已有 host.json”会直接使用所选目录，不复制或重建身份。需要同目录的 `private.dpapi`、`server.pem` 及配置引用的策略文件；私钥必须能被当前Windows用户解密。仅复制一个JSON无法迁移身份。源程序默认将启动记录放在仓库 `.local/companion-data/`；便携程序默认放在程序旁的 `devicebridge-data/`。可自行选择新的配置保存目录，已有目录不会被覆盖。
+
+也可通过命令行离线初始化（使用匹配Python版本的虚拟环境）：
 
 ```powershell
-python -m venv .local/companion-venv
-.local/companion-venv/Scripts/python.exe -m pip install -r companion/requirements.txt
-.local/companion-venv/Scripts/python.exe -m tools.prepare_companion --output .local/my-computer --policy .local/desktop-target-policy.json --relay-host relay.example.com
-.local/companion-venv/Scripts/python.exe -m companion.app --config .local/my-computer/host.json
+python -m venv .local/companion-dev-venv
+.local/companion-dev-venv/Scripts/python.exe -m pip install -r companion/requirements.txt
+.local/companion-dev-venv/Scripts/python.exe -m tools.prepare_companion --output .local/my-computer
+.local/companion-dev-venv/Scripts/python.exe -m companion.app --config .local/my-computer/host.json
 ```
 
-`relay.example.com` 是占位域名，必须换成实际部署的可达中继。策略文件沿用明确授权的原会话，当前已有本地策略仍为专用测试范围；新程序不会自动扩大到全部项目和聊天。准备命令仅创建新目录，不启动监听、不修改全局配置、防火墙、代理或原桌面数据库。
+需要在创建时指定连接，可添加 `--policy <已有策略> --relay-host <实际中继地址>`。准备命令复制策略快照，仅创建新目录，不启动监听，不修改源策略、全局配置、防火墙、代理或原桌面数据库。策略仍应来自明确授权的原会话；本程序不会自动扩大到全部项目和聊天。
 
 私有目录包含 DPAPI 加密的电脑私钥/中继注册凭据、公开证书、恢复日志与授权记录。目录丢失或 Windows 用户凭据不可用时，无法靠设备名称恢复原身份。不要通过重新生成同名目录解决身份读取失败。手机密钥由手机生成，不从电脑导出。
 
@@ -57,7 +65,7 @@ VPN 由用户现有网络策略管理。本程序不创建 Android VpnService，
 
 ## 构建与测试
 
-Windows 打包：安装 `pyinstaller==6.16.0` 后运行 `tools/build_companion.ps1`，输出位于 `.local/distribution/`。打包仅收集程序模块和桌面适配器，不收集私有策略、证书、日志或会话数据库。
+Windows打包：安装 `pyinstaller==6.16.0` 后运行 `tools/build_companion.ps1 -Version 0.2.1 -Python <虚拟环境的python.exe>`，再运行 `python -m tools.package_companion --version 0.2.1`。输出使用版本化目录并保留v0.2.0；若发现输出中含用户运行数据或链接则停止替换。打包只收集程序模块和桌面适配器，不含私有策略、证书、日志和会话数据库。
 
 ```powershell
 .local/companion-venv/Scripts/python.exe -m unittest discover -s tests -q
