@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-2026-10-28：Android v0.1 已生成可安装 APK，完成 API 35 模拟器上的原 Codex 消息、丢确认核对、加密记录和 TLS 验证。独立 follower、SQLite 恢复与 mTLS 主机已贯通。客户端支持授权会话、分页消息、文本和状态，当前连接使用模拟器或 USB 转发。ChatGPT 合法常驻入口、手机审批、完整项目管理与生产中继仍未接通。
+2026-10-29：Android v0.2 已实现扫码/图片配对、手机 Keystore 身份、电脑端确认与设备撤销、双向 TLS 中继通路及可选局域网候选连接。API 35 模拟器已完成合成会话的实际加密中继发送与丢确认核对。提供 Windows 便携程序和中继源码/容器部署文件；尚无公网中继，也未完成实体手机与 VPN 切换验证。原 Codex 适配器沿用 v0.1，ChatGPT 合法常驻入口、手机审批和完整项目管理仍待接入。
 
 桌面入口属于当前安装版本内部协议，需按版本重新验证；不能视为已获得稳定公开 API。
 
@@ -33,6 +33,9 @@
 - [原运行时与恢复层贯通结果](docs/results/2026-10-28-integrated-recovery.md)
 - [ChatGPT 常驻入口调查](docs/results/2026-10-28-chatgpt-background-entry.md)
 - [Android APP 构建与连接](android/README.md)
+- [电脑端与中继部署](companion/README.md)
+- [扫码配对与中继协议](docs/pairing-v2-contract.md)
+- [Android v0.2 配对与中继验证](docs/results/2026-10-29-pairing-relay-v02.md)
 - [Android v0.1 验证结果](docs/results/2026-10-28-android-v01.md)
 - [本地恢复实验原型与运行方式](prototype/README.md)
 - [21 项测试结果及覆盖边界](docs/results/2026-10-28-recovery-lab.md)

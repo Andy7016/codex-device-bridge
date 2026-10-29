@@ -145,6 +145,10 @@ class DesktopRecoveryService:
             raise Denied("unknown device")
         return self.gates[device]
 
+    def register_device(self, device):
+        """Local pairing coordinator only; grants still come from the journal."""
+        self.gates.setdefault(device, threading.RLock())
+
     def _target(self, label):
         if not isinstance(label, str):
             raise ValueError("invalid target label")

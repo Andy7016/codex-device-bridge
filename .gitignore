@@ -6,6 +6,7 @@
 *.key
 *.p12
 *.pfx
+*.dpapi
 *.keystore
 *.jks
 .rnd

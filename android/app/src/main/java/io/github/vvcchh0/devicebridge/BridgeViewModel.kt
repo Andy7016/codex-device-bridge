@@ -6,6 +6,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.vvcchh0.devicebridge.data.BridgeFailure
 import io.github.vvcchh0.devicebridge.data.ConnectionProfile
+import io.github.vvcchh0.devicebridge.data.PairingException
+import io.github.vvcchh0.devicebridge.data.PairingPhase
+import io.github.vvcchh0.devicebridge.data.PairingProgress
+import io.github.vvcchh0.devicebridge.data.PairingQrImageDecoder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,17 +33,20 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     private var runtimeStatus = "unknown"
     private var historyExpanded = false
     private var polling: Job? = null
+    private var pairingPolling: Job? = null
     private var actionJob: Job? = null
     private var foreground = false
 
     init {
         action {
             profile = withContext(Dispatchers.IO) { repository.profiles.load() }
+            val pendingPairing = withContext(Dispatchers.IO) { repository.pairing.pendingProgress() }
             profile?.let { p ->
                 mutable.update { it.copy(profileName = p.displayName, endpoint = "${p.host}:${p.port}") }
                 val operations = withContext(Dispatchers.IO) { repository.outbox.load(p.id) }
                 mutable.update { it.copy(profileName = p.displayName, endpoint = "${p.host}:${p.port}", operations = operations) }
             }
+            if (pendingPairing != null) applyPairingProgress(pendingPairing)
         }
     }
 
@@ -64,6 +71,42 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val operations = withContext(Dispatchers.IO) { repository.outbox.load(imported.id) }
         mutable.value = UiState(profileName = imported.displayName, endpoint = "${imported.host}:${imported.port}", operations = operations,
             busy = true, notice = "连接资料已安全保存。点击连接验证电脑身份。")
+    }
+
+    /** QR text stays in the UI only until pairing begins; it is encrypted before the first RPC. */
+    fun updatePairingInput(value: String) {
+        mutable.update { it.copy(pairingInput = value.take(11_000), error = null) }
+    }
+
+    fun acceptScannedPairingQr(value: String) = updatePairingInput(value)
+
+    fun importPairingImage(uri: Uri) = pairingAction {
+        val qr = withContext(Dispatchers.IO) {
+            PairingQrImageDecoder.decode(getApplication<Application>().contentResolver, uri)
+        }
+        updatePairingInput(qr)
+        mutable.update { it.copy(notice = "二维码已读取。检查来源后，点击开始配对。") }
+    }
+
+    fun beginPairing() = pairingAction {
+        val qr = mutable.value.pairingInput.trim()
+        if (qr.isEmpty()) throw PairingException("pairing_qr_required")
+        val progress = withContext(Dispatchers.IO) { repository.pairing.startOrResume(qr) }
+        applyPairingProgress(progress)
+    }
+
+    fun checkPairing() = pairingAction {
+        val progress = withContext(Dispatchers.IO) { repository.pairing.checkStatus() }
+        applyPairingProgress(progress)
+    }
+
+    fun discardPairing() = pairingAction {
+        withContext(Dispatchers.IO) { repository.pairing.discardPending() }
+        pairingPolling?.cancel()
+        mutable.update {
+            it.copy(pairingPhase = null, pairingHostName = null, pairingConfirmationCode = null,
+                pairingExpiresAt = null, pairingRequestId = null, notice = "已移除本机未完成的配对请求。")
+        }
     }
 
     fun connect() = action {
@@ -130,7 +173,91 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         mutable.value = UiState(busy = true, notice = "连接已移除，重新导入同一身份可继续核对原操作。")
     }
 
-    fun setForeground(value: Boolean) { foreground = value; if (value) startPolling() else polling?.cancel() }
+    fun setForeground(value: Boolean) {
+        foreground = value
+        if (value) {
+            startPolling()
+            if (mutable.value.pairingPhase == PairingPhase.WAITING_FOR_APPROVAL) startPairingPolling()
+        } else {
+            polling?.cancel()
+            pairingPolling?.cancel()
+        }
+    }
+
+    private fun pairingAction(block: suspend () -> Unit) {
+        if (mutable.value.busy) return
+        pairingPolling?.cancel()
+        actionJob = viewModelScope.launch {
+            mutable.update { it.copy(busy = true, error = null) }
+            try {
+                block()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val saved = try { withContext(Dispatchers.IO) { repository.pairing.pendingProgress() } } catch (_: Exception) { null }
+                if (saved != null) applyPairingProgress(saved, launchPolling = false)
+                mutable.update { it.copy(error = explain(error)) }
+            } finally {
+                mutable.update { it.copy(busy = false) }
+                if (mutable.value.pairingPhase == PairingPhase.WAITING_FOR_APPROVAL && foreground) startPairingPolling()
+            }
+        }
+    }
+
+    internal suspend fun applyPairingProgress(progress: PairingProgress, launchPolling: Boolean = true) {
+        if (progress.phase == PairingPhase.APPROVED && progress.profile != null) {
+            val approved = progress.profile
+            polling?.cancel()
+            profile = approved
+            nextBefore = null
+            historyExpanded = false
+            // Switch identity and remove old chat data before reading this
+            // profile's outbox. A corrupt new record must never retain another
+            // computer's messages or an active polling loop.
+            mutable.value = UiState(profileName = approved.displayName, endpoint = "${approved.host}:${approved.port}",
+                busy = mutable.value.busy, pairingPhase = progress.phase, pairingHostName = progress.hostName,
+                pairingConfirmationCode = progress.confirmationCode, pairingExpiresAt = progress.expiresAt,
+                pairingRequestId = progress.requestId)
+            val operations = withContext(Dispatchers.IO) { repository.outbox.load(approved.id) }
+            mutable.update { it.copy(operations = operations,
+                notice = "电脑已批准此设备。连接前可先核对资料；连接不会自动发送消息。", error = null) }
+        } else {
+            mutable.update {
+                it.copy(pairingPhase = progress.phase, pairingHostName = progress.hostName,
+                    pairingConfirmationCode = progress.confirmationCode, pairingExpiresAt = progress.expiresAt,
+                    pairingRequestId = progress.requestId,
+                    notice = when (progress.phase) {
+                        PairingPhase.STARTING -> "已保存配对请求，正在联系电脑。"
+                        PairingPhase.WAITING_FOR_APPROVAL -> "请在电脑上核对设备与确认码，并批准所需权限。"
+                        PairingPhase.DENIED -> "电脑拒绝了此配对请求。"
+                        PairingPhase.APPROVED -> it.notice
+                    }, error = null)
+            }
+        }
+        if (launchPolling && progress.phase == PairingPhase.WAITING_FOR_APPROVAL && foreground) startPairingPolling()
+    }
+
+    /** Short foreground polling window; manual status checks resume the same durable request later. */
+    private fun startPairingPolling() {
+        pairingPolling?.cancel()
+        if (!foreground || mutable.value.pairingPhase != PairingPhase.WAITING_FOR_APPROVAL) return
+        pairingPolling = viewModelScope.launch {
+            repeat(MAX_PAIRING_POLLS) {
+                delay(PAIRING_POLL_INTERVAL_MS)
+                if (!foreground || mutable.value.pairingPhase != PairingPhase.WAITING_FOR_APPROVAL) return@launch
+                if (mutable.value.busy) return@repeat
+                try {
+                    val progress = withContext(Dispatchers.IO) { repository.pairing.checkStatus() }
+                    applyPairingProgress(progress, launchPolling = false)
+                    if (progress.phase != PairingPhase.WAITING_FOR_APPROVAL) return@launch
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // Keep the code and request visible; the explicit status button resumes recovery.
+                }
+            }
+        }
+    }
 
     private fun startPolling() {
         polling?.cancel()
@@ -202,7 +329,18 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         "transport_timeout", "transport_failed" -> "连接暂时不可用，请检查电脑在线状态。待核对操作不会重发。"
         "unresolved_operation_exists" -> "相同消息仍有待核对操作，请先核对原操作。"
         "message_not_authorized" -> "电脑当前只允许指定的测试消息。"
-        else -> "操作未完成，请检查连接资料或刷新。原操作记录已保留。"
+        else -> when ((error as? PairingException)?.code) {
+            "invalid_pairing_qr", "unsupported_pairing_qr", "pairing_invite_expired" -> "配对二维码无效或已过期，请在电脑端重新生成。"
+            "pending_pairing_exists" -> "本机已有未完成的配对请求，请先继续检查或移除该请求。"
+            "no_pending_pairing" -> "本机没有可恢复的配对请求，请扫描新的电脑二维码。"
+            "confirmation_code_mismatch" -> "本机确认码校验失败，请重新开始配对。"
+            else -> "操作未完成，请检查连接资料或刷新。原操作记录已保留。"
+        }
+    }
+
+    private companion object {
+        const val PAIRING_POLL_INTERVAL_MS = 3_000L
+        const val MAX_PAIRING_POLLS = 15
     }
 
     fun showDemo() {

@@ -1,5 +1,7 @@
 package io.github.vvcchh0.devicebridge
 
+import io.github.vvcchh0.devicebridge.data.PairingPhase
+
 data class SessionInfo(
     val label: String,
     val title: String,
@@ -36,6 +38,12 @@ data class UiState(
     val lastSync: String? = null,
     val hasMoreHistory: Boolean = false,
     val demo: Boolean = false,
+    val pairingInput: String = "",
+    val pairingPhase: PairingPhase? = null,
+    val pairingHostName: String? = null,
+    val pairingConfirmationCode: String? = null,
+    val pairingExpiresAt: Long? = null,
+    val pairingRequestId: String? = null,
 )
 
 data class UiActions(
@@ -49,4 +57,10 @@ data class UiActions(
     val reconcile: (String) -> Unit,
     val showDemo: () -> Unit,
     val forgetProfile: () -> Unit,
+    val updatePairingInput: (String) -> Unit = {},
+    val beginPairing: () -> Unit = {},
+    val scanPairingQr: () -> Unit = {},
+    val importPairingImage: () -> Unit = {},
+    val checkPairing: () -> Unit = {},
+    val discardPairing: () -> Unit = {},
 )

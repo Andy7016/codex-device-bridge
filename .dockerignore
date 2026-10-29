@@ -1,0 +1,11 @@
+**
+!companion/
+!companion/__init__.py
+!companion/relay.py
+!companion/wire.py
+!companion/Dockerfile.relay
+!prototype/
+!prototype/__init__.py
+!prototype/loopback.py
+!prototype/journal.py
+!prototype/lease.py

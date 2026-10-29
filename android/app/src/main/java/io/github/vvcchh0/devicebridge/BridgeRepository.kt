@@ -5,6 +5,7 @@ import io.github.vvcchh0.devicebridge.data.BridgeFailure
 import io.github.vvcchh0.devicebridge.data.BridgeTransport
 import io.github.vvcchh0.devicebridge.data.ConnectionProfile
 import io.github.vvcchh0.devicebridge.data.OperationStore
+import io.github.vvcchh0.devicebridge.data.PairingRepository
 import io.github.vvcchh0.devicebridge.data.ProfileStore
 import org.json.JSONObject
 import java.util.UUID
@@ -14,6 +15,7 @@ data class HistoryPage(val messages: List<ChatMessage>, val nextBefore: String?,
 class BridgeRepository(context: Context, private val transport: BridgeTransport = BridgeTransport()) {
     val profiles = ProfileStore(context)
     val outbox = OperationStore(context)
+    val pairing = PairingRepository(context, transport)
 
     fun catalog(profile: ConnectionProfile): List<SessionInfo> {
         val list = transport.request(profile, "catalog", JSONObject()).getJSONArray("sessions")

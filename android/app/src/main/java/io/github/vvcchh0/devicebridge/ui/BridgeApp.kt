@@ -69,6 +69,7 @@ import io.github.vvcchh0.devicebridge.PendingOperation
 import io.github.vvcchh0.devicebridge.SessionInfo
 import io.github.vvcchh0.devicebridge.UiActions
 import io.github.vvcchh0.devicebridge.UiState
+import io.github.vvcchh0.devicebridge.data.PairingPhase
 
 private enum class BridgePage(val title: String, val symbol: String) {
     CHAT("会话", "聊"),
@@ -763,6 +764,7 @@ private fun DevicePage(
             title = "设备连接",
             subtitle = "管理本机与桌面端之间的受信连接。",
         )
+        PairingCard(state, actions)
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -883,6 +885,119 @@ private fun DevicePage(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+@Composable
+private fun PairingCard(state: UiState, actions: UiActions) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(11.dp),
+        ) {
+            Text("与桌面端配对", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "扫描桌面端生成的一次性二维码，或粘贴二维码文本。批准必须在电脑上完成。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = state.pairingInput,
+                onValueChange = actions.updatePairingInput,
+                enabled = !state.busy,
+                modifier = Modifier.fillMaxWidth().testTag("pairing-qr-input"),
+                label = { Text("配对二维码文本") },
+                placeholder = { Text("dbpair:…") },
+                minLines = 2,
+                maxLines = 4,
+                supportingText = { Text("二维码包含短期配对凭据；仅从你信任的电脑获取。") },
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = actions.scanPairingQr,
+                    enabled = !state.busy,
+                    modifier = Modifier.weight(1f).testTag("scan-pairing-qr"),
+                ) { Text("扫描二维码", maxLines = 1) }
+                OutlinedButton(
+                    onClick = actions.importPairingImage,
+                    enabled = !state.busy,
+                    modifier = Modifier.weight(1f).testTag("import-pairing-image"),
+                ) { Text("读取二维码图片", maxLines = 1) }
+            }
+            Button(
+                onClick = actions.beginPairing,
+                enabled = !state.busy && state.pairingInput.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().testTag("begin-pairing"),
+            ) { Text(if (state.busy) "正在处理…" else "开始配对") }
+
+            when (state.pairingPhase) {
+                PairingPhase.STARTING -> PairingStatusPanel(
+                    title = "正在联系 ${state.pairingHostName.orEmpty()}",
+                    body = "请求身份和恢复记录已保存在本机。再次开始会继续使用同一请求。",
+                    code = null,
+                )
+                PairingPhase.WAITING_FOR_APPROVAL -> PairingStatusPanel(
+                    title = "等待电脑批准：${state.pairingHostName.orEmpty()}",
+                    body = "请核对这组确认码是否与电脑上显示的一致，再在电脑上批准设备及其权限。",
+                    code = state.pairingConfirmationCode,
+                )
+                PairingPhase.APPROVED -> PairingStatusPanel(
+                    title = "已由电脑批准",
+                    body = "连接资料已保存。确认码仅用于本次配对核对；连接后仍需你手动发送消息。",
+                    code = state.pairingConfirmationCode,
+                )
+                PairingPhase.DENIED -> PairingStatusPanel(
+                    title = "配对已被拒绝",
+                    body = "电脑没有授权此设备。需要时请在电脑端重新生成新的配对二维码。",
+                    code = state.pairingConfirmationCode,
+                )
+                null -> Unit
+            }
+
+            if (state.pairingPhase == PairingPhase.STARTING || state.pairingPhase == PairingPhase.WAITING_FOR_APPROVAL) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = actions.checkPairing,
+                        enabled = !state.busy,
+                        modifier = Modifier.weight(1f).testTag("check-pairing"),
+                    ) { Text("检查批准状态") }
+                    TextButton(
+                        onClick = actions.discardPairing,
+                        enabled = !state.busy,
+                        modifier = Modifier.weight(1f).testTag("discard-pairing"),
+                    ) { Text("移除此请求") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PairingStatusPanel(title: String, body: String, code: String?) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            if (code != null) {
+                Text(
+                    code,
+                    modifier = Modifier.fillMaxWidth().testTag("pairing-code"),
+                    style = MaterialTheme.typography.headlineMedium,
+                    letterSpacing = 4.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
+        }
     }
 }
 

@@ -8,6 +8,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import io.github.vvcchh0.devicebridge.ui.BridgeApp
 import io.github.vvcchh0.devicebridge.ui.DeviceBridgeTheme
 
@@ -15,6 +17,12 @@ class MainActivity : ComponentActivity() {
     private lateinit var model: BridgeViewModel
     private val profilePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) model.importProfile(uri)
+    }
+    private val pairingImagePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) model.importPairingImage(uri)
+    }
+    private val pairingScanner = registerForActivityResult(ScanContract()) { result ->
+        result.contents?.let(model::acceptScannedPairingQr)
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,6 +36,19 @@ class MainActivity : ComponentActivity() {
                     connect = { model.connect() }, disconnect = { model.disconnect() }, selectSession = { model.selectSession(it) },
                     refresh = { model.refresh() }, loadOlder = { model.loadOlder() }, send = { model.send(it) },
                     reconcile = { model.reconcile(it) }, showDemo = { model.showDemo() }, forgetProfile = { model.forgetProfile() },
+                    updatePairingInput = model::updatePairingInput,
+                    beginPairing = model::beginPairing,
+                    scanPairingQr = {
+                        pairingScanner.launch(ScanOptions().apply {
+                            setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                            setPrompt("扫描桌面端 Device Bridge 配对二维码")
+                            setBeepEnabled(false)
+                            setOrientationLocked(false)
+                        })
+                    },
+                    importPairingImage = { pairingImagePicker.launch(arrayOf("image/*")) },
+                    checkPairing = model::checkPairing,
+                    discardPairing = model::discardPairing,
                 ))
             }
         }

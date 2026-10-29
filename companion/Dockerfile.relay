@@ -1,0 +1,7 @@
+FROM python:3.13-slim
+WORKDIR /app
+COPY companion/__init__.py companion/relay.py companion/wire.py /app/companion/
+COPY prototype/__init__.py prototype/loopback.py prototype/journal.py prototype/lease.py /app/prototype/
+USER 10001:10001
+EXPOSE 8443
+ENTRYPOINT ["python", "-m", "companion.relay", "--service", "--bind", "0.0.0.0", "--port", "8443", "--allow-public", "--config", "/run/device-bridge/relay.json"]
