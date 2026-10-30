@@ -307,8 +307,9 @@ private class SecureRouteExchange : RouteExchange {
             throw BridgeFailure("tls_verification_failed", deliveryUnknown = method == "submit" && requestWritten, requestWritten = requestWritten).apply { initCause(error) }
         } catch (_: CertificateException) {
             throw BridgeFailure("tls_verification_failed", deliveryUnknown = method == "submit" && requestWritten, requestWritten = requestWritten)
-        } catch (_: IOException) {
-            throw BridgeFailure("transport_failed", deliveryUnknown = method == "submit" && requestWritten, requestWritten = requestWritten)
+        } catch (error: IOException) {
+            throw BridgeFailure((error as? RelayConnectionFailure)?.code ?: "transport_failed",
+                deliveryUnknown = method == "submit" && requestWritten, requestWritten = requestWritten)
         } catch (_: Exception) {
             throw BridgeFailure("transport_failed", deliveryUnknown = method == "submit" && requestWritten, requestWritten = requestWritten)
         } finally {

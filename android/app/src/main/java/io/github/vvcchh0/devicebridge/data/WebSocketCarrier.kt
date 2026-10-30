@@ -32,7 +32,7 @@ internal class WebSocketCarrier(relay: RelayEndpoint, hostId: String, context: S
     @Volatile private var timeout = 10000
     private var ready = false
     private val opened = CountDownLatch(1)
-    private var failure: IOException? = null
+    @Volatile private var failure: IOException? = null
     private val authority = if (relay.host.contains(':')) "[${relay.host}]" else relay.host
     private val targetUri = URI("wss://$authority:${relay.port}${relay.path}/$hostId/client")
     private val client = object : WebSocketClient(
@@ -75,7 +75,13 @@ internal class WebSocketCarrier(relay: RelayEndpoint, hostId: String, context: S
             if (invalid) requestAbort(IOException("carrier_buffer_limit"))
         }
         override fun onClose(code: Int, reason: String?, remote: Boolean) {
-            synchronized(lock) { ended = true; opened.countDown(); lock.notifyAll() }
+            synchronized(lock) {
+                if (!ready && failure == null) {
+                    // This library reports rejected HTTP handshakes via close, without onError.
+                    failure = RelayConnectionFailure(relayFailureCode(IOException(reason.orEmpty().take(512))))
+                }
+                ended = true; opened.countDown(); lock.notifyAll()
+            }
         }
         override fun onError(error: Exception) { requestAbort(IOException("websocket_failed", error)) }
     }
@@ -92,7 +98,8 @@ internal class WebSocketCarrier(relay: RelayEndpoint, hostId: String, context: S
             // Use the application's default network. Never bind beneath a user VPN.
             if (ended) throw IOException("carrier_closed")
             client.connect()
-            if (!opened.await(8, TimeUnit.SECONDS) || ended || !client.isOpen) throw SocketTimeoutException("websocket_connect_timeout")
+            if (!opened.await(8, TimeUnit.SECONDS)) throw SocketTimeoutException("websocket_connect_timeout")
+            if (ended || !client.isOpen) throw failure ?: IOException("websocket_closed_before_open")
             synchronized(sendGate) {
                 if (ended) throw IOException("carrier_closed")
                 client.send(org.json.JSONObject().put("version", 2).put("hostId", hostId).put("role", "client").toString())
@@ -106,10 +113,18 @@ internal class WebSocketCarrier(relay: RelayEndpoint, hostId: String, context: S
                 }
                 if (!ready || ended) throw failure ?: IOException("relay_unavailable")
             }
-        } catch (error: Exception) { abort(IOException("relay_unavailable", error)); throw error }
+        } catch (error: Exception) {
+            val classified = if (error is RelayConnectionFailure) error else RelayConnectionFailure(relayFailureCode(error), error)
+            abort(classified); throw classified
+        }
     }
 
     private fun requestAbort(error: IOException) {
+        // Publish the cause before waking the constructor; closing remains outside locks.
+        synchronized(lock) {
+            if (failure == null) failure = error
+            ended = true; opened.countDown(); lock.notifyAll()
+        }
         if (closeScheduled.compareAndSet(false, true)) CLOSER.execute { abort(error) }
     }
 

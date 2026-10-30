@@ -143,7 +143,9 @@ class StartupWizard:
             messagebox.showerror('初始化未完成', explain(error), parent=self.root)
 
     def import_existing(self):
-        path = filedialog.askopenfilename(title='打开完整配置目录中的 host.json', filetypes=[('本机配置', '*.json')])
+        initial = self.directory if self.directory.is_dir() else self.directory.parent
+        path = filedialog.askopenfilename(parent=self.root, title='打开完整配置目录中的 host.json',
+            initialdir=str(initial), initialfile='host.json', filetypes=[('本机配置', '*.json')])
         if path:
             try:
                 load_configuration(path)

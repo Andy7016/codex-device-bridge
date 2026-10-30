@@ -83,6 +83,23 @@ class WebSocketIntegrationTest {
         }
     }
 
+    @Test fun rejectedRouteTicketReportsAdmissionFailureBeforeApplicationWrite() {
+        val original = PairingQr.parse(fixture().getString("qrText"))
+        val invite = original.copy(relay = original.relay.withTicket("invalid-synthetic-ticket"), directEndpoints = emptyList())
+        val identity = AndroidDeviceIdentity().create()
+        try {
+            val params = JSONObject().put("inviteId", invite.inviteId).put("inviteSecret", invite.secret())
+                .put("requestId", UUID.randomUUID().toString()).put("phoneName", "Synthetic rejection")
+                .put("clientCertificatePem", identity.certificatePem)
+            try { BridgeTransport().requestPairing(invite, "pair.begin", params); fail("invalid ticket accepted") }
+            catch (failure: BridgeFailure) {
+                assertEquals("relay_admission_rejected", failure.code)
+                assertFalse(failure.requestWritten)
+                assertFalse(failure.deliveryUnknown)
+            }
+        } finally { AndroidDeviceIdentity().delete(identity.alias) }
+    }
+
     @Test fun cancelledBeforeWriteCannotStartAnotherRoute() {
         val fixture = fixture()
         val invite = PairingQr.parse(fixture.getString("qrText"))

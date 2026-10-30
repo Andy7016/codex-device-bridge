@@ -7,6 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import qrcode
 from PIL import ImageTk
+from . import __version__
 from .host import Host
 from .configuration import remember_configuration, remembered_configuration
 from .startup import SettingsDialog, StartupWizard, explain, startup_directory
@@ -18,14 +19,15 @@ class Window:
         self.update_expires = None
         self.closing = False
         self.reopen_config = None
-        root.title('Device Bridge · 电脑连接')
+        root.title('Device Bridge '+__version__+' · 电脑连接')
         root.geometry('1100x950')
         body = ttk.Frame(root, padding=20)
         body.pack(fill='both', expand=True)
         ttk.Label(body, text='连接你的手机', font=('Microsoft YaHei UI', 20, 'bold')).pack(anchor='w')
         ttk.Label(body, text='扫码后核对两端六位数字，在本机选择允许访问的范围。').pack(anchor='w', pady=8)
-        self.status = ttk.Label(body)
+        self.status = ttk.Label(body, wraplength=1000)
         self.status.pack(anchor='w')
+        ttk.Label(body, text='当前配置：'+str(host.config_path), wraplength=1000).pack(anchor='w', pady=(4, 8))
         controls = ttk.Frame(body)
         controls.pack(fill='x', pady=5)
         ttk.Button(controls, text='连接与会话范围设置', command=self.settings).pack(side='left')
@@ -71,7 +73,6 @@ class Window:
         ttk.Button(body, text='撤销所选设备', command=self.revoke).pack(anchor='e', pady=8)
         ttk.Button(body, text='为所选设备生成连接更新二维码', command=self.connection_update).pack(anchor='e', pady=4)
         ttk.Label(body, text='电脑身份：'+host.identity['hostId'][:24]+'…').pack(anchor='w')
-        ttk.Label(body, text='配置：'+str(host.config_path), wraplength=1000).pack(anchor='w', pady=4)
         ttk.Label(body, text='关闭窗口会停止服务。中继仅转发端到端加密流量。').pack(anchor='w', pady=8)
         root.protocol('WM_DELETE_WINDOW', self.close)
         self.pending_rows, self.device_rows = [], []
@@ -116,7 +117,8 @@ class Window:
         from .admission import registration
         from .configuration import write_json
         path = filedialog.asksaveasfilename(parent=self.root, title='导出中继登记（不含电脑私钥或原始凭据）',
-            initialfile='relay-registration-wss.json', defaultextension='.json', filetypes=[('JSON', '*.json')])
+            initialdir=str(self.host.config_path.parent), initialfile='relay-registration-wss.json',
+            defaultextension='.json', filetypes=[('JSON', '*.json')])
         if path:
             try:
                 write_json(path, registration(self.host.identity['serverCertificatePem'], self.host.private['relayToken']))
@@ -130,7 +132,8 @@ class Window:
 
     def open_configuration(self):
         from .configuration import load_configuration
-        path = filedialog.askopenfilename(title='打开完整配置目录中的 host.json', filetypes=[('本机配置', '*.json')])
+        path = filedialog.askopenfilename(parent=self.root, title='打开完整配置目录中的 host.json',
+            initialdir=str(self.host.config_path.parent), initialfile='host.json', filetypes=[('本机配置', '*.json')])
         if path:
             try:
                 load_configuration(path)

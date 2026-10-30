@@ -14,6 +14,7 @@ from prototype.desktop import DesktopRecoveryService, NodeDesktopRuntime
 from prototype.journal import Conflict, Denied, Journal
 from .pairing import Pairing
 from .configuration import load_configuration
+from .connection_status import RelayStatus, RelayWaitEnded, failure_detail
 from .security import certificate, fingerprint, private_address, public_id, server_context, unprotect
 from .wire import TLSStream, read_frame, relay_connect, send_frame
 
@@ -44,6 +45,7 @@ class Host:
             self.refresh_context()
             self.listener = None
             self.status = '尚未启动'
+            self.relay_status = RelayStatus()
             self.last_tls_failure = None
         except BaseException:
             self.journal.close()
@@ -171,6 +173,7 @@ class Host:
                 pass
 
     def _relay_worker(self):
+        channel = threading.get_ident()
         failures = 0
         while not self.stop_event.is_set():
             tracked = []
@@ -178,26 +181,38 @@ class Host:
                 tracked.append(stream)
                 self._track(stream)
             try:
-                if not failures:
-                    self.status = '正在连接中继 · 后台处理'
+                self.relay_status.update(channel, 'connecting')
                 preface = {'version': 1, 'role': 'host', 'hostId': self.identity['hostId'], 'token': self.private['relayToken']}
                 if self.identity['relay'].get('transport') == 'wss':
                     preface['revoked'] = self.revoked_subjects()
-                outer = relay_connect(self.identity['relay'], preface, on_socket=track)
+                outer = relay_connect(self.identity['relay'], preface, on_socket=track,
+                                      on_waiting=lambda: self.relay_status.update(channel, 'waiting'))
                 failures = 0
                 if self.stop_event.is_set():
                     break
-                self.status = '加密连接处理中'
+                self.relay_status.update(channel, 'processing')
                 self.serve_connection(outer)
-            except (OSError, ValueError, EOFError):
+            except RelayWaitEnded:
+                failures = 0
+                self.relay_status.update(channel, 'renewing')
+            except (OSError, ValueError, EOFError, ImportError) as error:
                 failures += 1
-                self.status = '中继连接待恢复'
+                self.relay_status.update(channel, 'failed', failure_detail(error))
             finally:
                 for stream in tracked:
                     with self.active_lock:
                         self.sockets.discard(stream)
                     stream.close()
             self.stop_event.wait(min(15, .2*(2**min(failures, 6)))+random.random()*.15)
+
+    @property
+    def status(self):
+        relay = getattr(self, 'relay_status', None)
+        return relay.text() if relay and self.identity.get('relay') and self.threads else self._status
+
+    @status.setter
+    def status(self, value):
+        self._status = value
 
     def _direct_worker(self):
         while not self.stop_event.is_set():

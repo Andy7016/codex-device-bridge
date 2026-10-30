@@ -5,6 +5,7 @@ import threading
 import ipaddress
 import asyncio
 import atexit
+import time
 from concurrent.futures import TimeoutError as FutureTimeout
 
 from .security import check_pin, client_context
@@ -131,7 +132,7 @@ class WebSocketTransport:
             self.connection.close()
 
 
-def connect(endpoint, preface, *, timeout=50, on_socket=None):
+def connect(endpoint, preface, *, timeout=50, on_socket=None, on_waiting=None):
     from websockets.asyncio.client import connect as open_websocket
     from websockets.exceptions import WebSocketException
     host, role = endpoint['host'], preface['role']
@@ -162,8 +163,20 @@ def connect(endpoint, preface, *, timeout=50, on_socket=None):
         if role == 'host':
             hello['revoked'] = preface.get('revoked', [])
         carrier.sendall(json.dumps(hello, separators=(',', ':')).encode() + b'\n')
+        waiting_since = time.monotonic()
+        if on_waiting:
+            on_waiting()
         from .wire import read_frame
-        if read_frame(carrier, 2048, timeout=timeout) != {'ready': True}:
+        try:
+            ready = read_frame(carrier, 2048, timeout=timeout)
+        except EOFError as error:
+            from .connection_status import RelayWaitEnded
+            received = getattr(error.__cause__, 'rcvd', None)
+            if (role == 'host' and time.monotonic() - waiting_since >= 40 and
+                    getattr(received, 'code', None) == 1008 and getattr(received, 'reason', None) == 'tunnel_closed'):
+                raise RelayWaitEnded() from None
+            raise
+        if ready != {'ready': True}:
             raise ConnectionError('relay_unavailable')
         carrier.begin_tunnel()
         return carrier

@@ -84,10 +84,10 @@ class TLSStream:
         self.transport.close()
 
 
-def relay_connect(endpoint, preface, *, timeout=50, on_socket=None):
+def relay_connect(endpoint, preface, *, timeout=50, on_socket=None, on_waiting=None):
     if endpoint.get('transport') == 'wss':
         from .websocket_transport import connect
-        return connect(endpoint, preface, timeout=timeout, on_socket=on_socket)
+        return connect(endpoint, preface, timeout=timeout, on_socket=on_socket, on_waiting=on_waiting)
     from .security import client_context, check_pin
     plain = socket.create_connection((endpoint['host'], endpoint['port']), timeout=8)
     try:
@@ -97,6 +97,8 @@ def relay_connect(endpoint, preface, *, timeout=50, on_socket=None):
             on_socket(outer)
         outer.settimeout(timeout)
         send_frame(outer, preface, 2048)
+        if on_waiting:
+            on_waiting()
         if read_frame(outer, 2048, timeout=timeout) != {'ready': True}:
             raise ConnectionError('relay_unavailable')
         return outer

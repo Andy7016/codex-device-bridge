@@ -198,6 +198,23 @@ class WssRelayTests(unittest.TestCase):
         self.assertEqual(self.runtime.sends, [])
 
 
+    def test_idle_host_slots_rotate_then_still_accept_pairing_without_false_recovery(self):
+        deadline = time.monotonic() + 8
+        while '等待手机' not in self.host.status and time.monotonic() < deadline:
+            time.sleep(.05)
+        self.assertIn('等待手机', self.host.status)
+        # Real 45-second server deadline: no fake clock or disabled limits.
+        until = time.monotonic() + 48
+        samples = []
+        while time.monotonic() < until:
+            samples.append(self.host.status)
+            time.sleep(.1)
+        self.assertFalse(any('待恢复' in value for value in samples), samples[-5:])
+        self.assertTrue(any('等待手机' in value for value in samples))
+        self.pair()
+        self.assertEqual(len(self.runtime.sends), 0)
+
+
 class WssConfigurationTests(unittest.TestCase):
     def test_url_validation_has_no_downgrade_query_credentials_or_arbitrary_path(self):
         endpoint = relay_endpoint('wss://device-bridge-relay.example:443/')
