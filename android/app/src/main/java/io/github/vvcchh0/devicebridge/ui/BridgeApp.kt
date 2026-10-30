@@ -88,7 +88,7 @@ import io.github.vvcchh0.devicebridge.UiActions
 import io.github.vvcchh0.devicebridge.UiState
 import io.github.vvcchh0.devicebridge.data.PairingPhase
 
-private enum class BridgePage(val title: String, @DrawableRes val icon: Int) {
+private enum class BridgePage(val title: String, @param:DrawableRes val icon: Int) {
     CHAT("会话", R.drawable.ic_nav_chat),
     DEVICE("设备", R.drawable.ic_nav_device),
     ACTIVITY("动态", R.drawable.ic_nav_activity),
@@ -860,7 +860,7 @@ private fun DevicePage(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("device-endpoint"),
-                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                            style = MaterialTheme.typography.bodyMedium,
                         )
                     }
                     if (state.lastSync != null) {

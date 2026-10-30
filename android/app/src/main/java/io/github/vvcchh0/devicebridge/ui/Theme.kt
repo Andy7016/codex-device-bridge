@@ -80,9 +80,9 @@ private val DarkColors = darkColorScheme(
     outlineVariant = Color(0xFF46534F),
     surfaceContainerLowest = Color(0xFF111716),
     surfaceContainerLow = Color(0xFF192120),
-    surfaceContainer = Color(0xFF1D2625),
-    surfaceContainerHigh = Color(0xFF263130),
-    surfaceContainerHighest = Color(0xFF303B39),
+    surfaceContainer = Color(0xFF253030),
+    surfaceContainerHigh = Color(0xFF2C3837),
+    surfaceContainerHighest = Color(0xFF36423F),
 )
 
 // Material defaults are tuned for Latin text; mixed Chinese/English needs taller lines.
