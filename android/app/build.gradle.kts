@@ -10,8 +10,8 @@ android {
         applicationId = "io.github.vvcchh0.devicebridge"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }
@@ -36,6 +36,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation("org.java-websocket:Java-WebSocket:1.6.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     androidTestImplementation(composeBom)
     androidTestImplementation("androidx.test:runner:1.6.2")

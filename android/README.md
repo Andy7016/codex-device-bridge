@@ -1,3 +1,11 @@
+# WSS 验证版 v0.3
+
+托管中继、配置与迁移步骤见[WSS中继说明](../relay/README.md)。新版可识别WSS配对二维码，并以档案v3保存路由票据；v1/v2档案保持兼容。设备身份和outbox仍独立于IP、端口及后端平台。
+
+已配对手机可以扫描电脑为原设备签发的连接更新二维码，经原电脑公钥验证后迁移到Cloudflare/Render入口。前台默认网络改变会中止旧通道，并恢复只读状态核对；submit首次写入之后始终保留未知结果，不自动重发。
+
+以下保留先前版本的实现与操作说明。
+
 # Device Bridge Android v0.2.0
 
 原生 Kotlin / Jetpack Compose 客户端，支持二维码配对、授权的原 Codex 会话目录、分页文本、发送、操作状态和未知结果核对。电脑端与中继见 [companion/README.md](../companion/README.md)。公网中继尚未部署，实体手机与真实 VPN 组合尚未验证。

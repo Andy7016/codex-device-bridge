@@ -6,6 +6,8 @@ import random
 import socket
 import ssl
 import threading
+import secrets
+import time
 
 from cryptography.exceptions import InvalidSignature
 from prototype.desktop import DesktopRecoveryService, NodeDesktopRuntime
@@ -34,7 +36,7 @@ class Host:
         try:
             runtime = runtime_factory(self.config['policy'], self.directory/'attempts')
             self.service = DesktopRecoveryService(self.journal, runtime, policy, devices=())
-            self.pairing = Pairing(self.journal, self.service, self.identity)
+            self.pairing = Pairing(self.journal, self.service, self.identity, ticket_issuer=self.issue_ticket)
             self.context_lock, self.active_lock = threading.RLock(), threading.RLock()
             self.active, self.sockets = {}, set()
             self.stop_event = threading.Event()
@@ -52,6 +54,29 @@ class Host:
             self.trusted = self.pairing.trusted()
             self.context = server_context(self.directory/'server.pem', self.private['keyPem'].encode(), self.directory,
                                           [entry[1] for entry in self.trusted.values()])
+
+    def issue_ticket(self, subject, *, expires=None):
+        from .admission import issue_ticket
+        return issue_ticket(self.private['keyPem'], self.identity['hostId'], subject, expires=expires)
+
+    def revoked_subjects(self):
+        with self.journal.lock:
+            rows = self.journal.db.execute('SELECT id FROM devices WHERE enabled=0').fetchall()
+        return ['phone:' + row['id'][6:] for row in rows if row['id'].startswith('phone-')]
+
+    def connection_update(self, device):
+        from .admission import sign_claims
+        if self.identity.get('relay', {}).get('transport') != 'wss':
+            raise ValueError('websocket_relay_required')
+        self.journal.authorize_device(device)
+        if device not in {entry[0] for entry in self.pairing.trusted().values()}:
+            raise Denied('unknown_device')
+        now = int(time.time())
+        subject = 'phone:' + device[6:]
+        claims = {'iss': self.identity['hostId'], 'sub': subject, 'aud': 'device-bridge-route-update-v1',
+                  'iat': now, 'exp': now + 120, 'jti': secrets.token_hex(16),
+                  'relay': {**self.identity['relay'], 'ticket': self.issue_ticket(subject)}}
+        return 'dbroute:' + sign_claims(self.private['keyPem'], claims)
 
     def approve(self, invite, code, grants):
         device = self.pairing.approve(invite, code, grants)
@@ -113,7 +138,10 @@ class Host:
                 raise Denied('client_identity_required')
             result = self.service.call(device, method, params)
             with self.service.response_guard(device):
-                send_frame(stream, {'ok': True, 'result': result})
+                envelope = {'ok': True, 'result': result}
+                if self.identity.get('relay', {}).get('transport') == 'wss':
+                    envelope['relayTicket'] = self.issue_ticket('phone:' + device[6:])
+                send_frame(stream, envelope)
         except ssl.SSLError as error:
             self.last_tls_failure = str(getattr(error, 'reason', 'TLS_FAILURE'))[:80]
             return
@@ -152,7 +180,10 @@ class Host:
             try:
                 if not failures:
                     self.status = '正在连接中继 · 后台处理'
-                outer = relay_connect(self.identity['relay'], {'version': 1, 'role': 'host', 'hostId': self.identity['hostId'], 'token': self.private['relayToken']}, on_socket=track)
+                preface = {'version': 1, 'role': 'host', 'hostId': self.identity['hostId'], 'token': self.private['relayToken']}
+                if self.identity['relay'].get('transport') == 'wss':
+                    preface['revoked'] = self.revoked_subjects()
+                outer = relay_connect(self.identity['relay'], preface, on_socket=track)
                 failures = 0
                 if self.stop_event.is_set():
                     break

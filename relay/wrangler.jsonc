@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "device-bridge-relay",
+  "main": "cloudflare.mjs",
+  "compatibility_date": "2026-10-30",
+  "workers_dev": true,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [{ "name": "RELAYS", "class_name": "DeviceRelay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DeviceRelay"] }],
+  "observability": { "enabled": false }
+}

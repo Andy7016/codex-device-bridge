@@ -31,7 +31,16 @@ import javax.net.ssl.X509KeyManager
 import java.net.Socket
 import javax.net.ssl.SSLEngine
 
-data class RelayEndpoint(val host: String, val port: Int, val certificatePem: String?)
+data class RelayEndpoint(val host: String, val port: Int, val certificatePem: String?,
+    val transport: String = "tls", val path: String? = null, private val admissionTicket: String? = null) {
+    internal fun ticket(): String? = admissionTicket
+    internal fun withTicket(value: String) = copy(admissionTicket = value)
+    internal fun json(): JSONObject = JSONObject().put("host", host).put("port", port)
+        .put("certificatePem", certificatePem ?: JSONObject.NULL).also {
+            if (transport == "wss") it.put("transport", "wss").put("path", path).put("ticket", admissionTicket)
+        }
+    override fun toString() = "RelayEndpoint(host=$host, port=$port, transport=$transport, ticket=<redacted>)"
+}
 data class DirectEndpoint(val host: String, val port: Int)
 
 /** Invitation secrets are kept out of generated string output. */
@@ -100,7 +109,8 @@ object PairingQr {
             throw PairingException("invalid_pairing_qr")
         }
         if (root.keys().asSequence().toSet() != INVITE_KEYS) throw PairingException("invalid_pairing_qr")
-        if (exactInt(root.opt("schemaVersion")) != 1) throw PairingException("unsupported_pairing_qr")
+        val version = exactInt(root.opt("schemaVersion"))
+        if (version !in setOf(1, 2)) throw PairingException("unsupported_pairing_qr")
 
         val displayName = string(root, "displayName", 1, 80)
         if (displayName != displayName.trim() || displayName.any { Character.isISOControl(it) }) {
@@ -132,7 +142,8 @@ object PairingQr {
         }
 
         val relayJson = root.opt("relay") as? JSONObject ?: throw PairingException("invalid_pairing_qr")
-        if (relayJson.keys().asSequence().toSet() != RELAY_KEYS) throw PairingException("invalid_pairing_qr")
+        val relayFields = if (version == 2) RELAY_KEYS + setOf("transport", "path", "ticket") else RELAY_KEYS
+        if (relayJson.keys().asSequence().toSet() != relayFields) throw PairingException("invalid_pairing_qr")
         val relayHost = normalizeHost(string(relayJson, "host", 1, 253))
         val relayPort = port(relayJson.opt("port"))
         val relayPemValue = relayJson.opt("certificatePem")
@@ -164,6 +175,13 @@ object PairingQr {
         if (!INVITE_ID.matches(inviteId) || !INVITE_SECRET.matches(inviteSecret)) throw PairingException("invalid_pairing_qr")
         val expiresAt = exactLong(root.opt("expiresAt")) ?: throw PairingException("invalid_pairing_qr")
         if (expiresAt <= 0 || (!allowExpired && expiresAt <= nowEpochSeconds)) throw PairingException("pairing_invite_expired")
+        var relay = RelayEndpoint(relayHost, relayPort, relayPem)
+        if (version == 2) {
+            if (relayJson.opt("transport") != "wss" || relayJson.opt("path") != "/v1/relay") throw PairingException("invalid_pairing_qr")
+            val ticket = string(relayJson, "ticket", 100, 2048)
+            RelayTicket.validate(ticket, hostId, "invite:$inviteId", serverPem, nowEpochSeconds, allowExpired)
+            relay = RelayEndpoint(relayHost, relayPort, relayPem, "wss", "/v1/relay", ticket)
+        }
 
         return PairingInvite(
             displayName = displayName,
@@ -171,7 +189,7 @@ object PairingQr {
             serverName = serverName,
             serverCertificatePem = serverPem,
             serverCertificateSha256 = certificatePin,
-            relay = RelayEndpoint(relayHost, relayPort, relayPem),
+            relay = relay,
             directEndpoints = direct,
             inviteId = inviteId,
             inviteSecret = inviteSecret,

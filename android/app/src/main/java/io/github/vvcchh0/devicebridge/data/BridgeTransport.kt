@@ -23,24 +23,37 @@ import javax.net.ssl.X509TrustManager
 /** Direct-first, relay-second typed JSONL transport. Route fallback stops before the first RPC byte. */
 class BridgeTransport internal constructor(private val exchange: RouteExchange) : PairingRpc {
     constructor() : this(SecureRouteExchange())
+    internal var relayTicketSink: ((String, String) -> Unit)? = null
+    private val tickets = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val cancellation = java.util.concurrent.atomic.AtomicInteger()
+    fun cancelActive() { cancellation.incrementAndGet(); tickets.clear(); (exchange as? SecureRouteExchange)?.cancelActive() }
 
     fun request(profile: ConnectionProfile, method: String, params: JSONObject): JSONObject {
+        val epoch = cancellation.get()
         validateApplicationParams(method, params)
         val routes = if (profile.schemaVersion == 1) {
             profile.directEndpoints.map { TransportRoute.Direct(it) }
         } else {
-            profile.directEndpoints.map { TransportRoute.Direct(it) } + listOfNotNull(profile.relay?.let { TransportRoute.Relay(it) })
+            profile.directEndpoints.map { TransportRoute.Direct(it) } + listOfNotNull(profile.relay?.let {
+                TransportRoute.Relay(tickets[profile.id]?.let { ticket -> it.withTicket(ticket) } ?: it)
+            })
         }
         val tls = InnerTlsConfig(
             serverName = profile.serverName,
             certificatePem = profile.serverCertificatePem,
             certificateSha256 = profile.serverCertificateSha256,
             clientKeyManagers = profile.keyManagers(),
+            onRelayTicket = if (profile.relay?.transport == "wss") { ticket ->
+                RelayTicket.validate(ticket, profile.hostId!!, "phone:${profile.clientCertificateSha256}", profile.serverCertificatePem)
+                tickets[profile.id] = ticket
+                relayTicketSink?.invoke(profile.id, ticket)
+            } else null,
         )
-        return execute(routes, profile.hostId ?: "", tls, method, params)
+        return execute(routes, profile.hostId ?: "", tls, method, params, epoch)
     }
 
     override fun requestPairing(invite: PairingInvite, method: String, params: JSONObject): JSONObject {
+        val epoch = cancellation.get()
         validatePairingParams(invite, method, params)
         val routes = invite.directEndpoints.map { TransportRoute.Direct(it) } + listOf(TransportRoute.Relay(invite.relay))
         val tls = InnerTlsConfig(
@@ -49,7 +62,7 @@ class BridgeTransport internal constructor(private val exchange: RouteExchange) 
             certificateSha256 = invite.serverCertificateSha256,
             clientKeyManagers = emptyArray(), // Pairing is server-authenticated; no unapproved phone cert is sent.
         )
-        return execute(routes, invite.hostId, tls, method, params)
+        return execute(routes, invite.hostId, tls, method, params, epoch)
     }
 
     private fun execute(
@@ -58,6 +71,7 @@ class BridgeTransport internal constructor(private val exchange: RouteExchange) 
         tls: InnerTlsConfig,
         method: String,
         params: JSONObject,
+        epoch: Int,
     ): JSONObject {
         if (routes.isEmpty()) throw BridgeFailure("no_route", deliveryUnknown = false)
         val frame = try {
@@ -73,10 +87,11 @@ class BridgeTransport internal constructor(private val exchange: RouteExchange) 
         try {
             var lastFailure: BridgeFailure? = null
             for (route in routes) {
+                if (cancellation.get() != epoch) throw BridgeFailure("transport_cancelled", deliveryUnknown = false)
                 try {
                     return exchange.exchange(route, hostId, tls, method, frame)
                 } catch (failure: BridgeFailure) {
-                    if (failure.requestWritten) throw failure
+                    if (failure.requestWritten || cancellation.get() != epoch) throw failure
                     lastFailure = failure
                 }
             }
@@ -216,6 +231,7 @@ internal data class InnerTlsConfig(
     val certificatePem: String,
     val certificateSha256: String,
     val clientKeyManagers: Array<javax.net.ssl.KeyManager>,
+    val onRelayTicket: ((String) -> Unit)? = null,
 )
 
 internal interface RouteExchange {
@@ -223,28 +239,43 @@ internal interface RouteExchange {
 }
 
 private class SecureRouteExchange : RouteExchange {
+    private val active = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
+    private val generation = java.util.concurrent.atomic.AtomicInteger()
+    fun cancelActive() {
+        generation.incrementAndGet()
+        active.toList().forEach { try { it.close() } catch (_: Exception) { } }
+    }
     override fun exchange(route: TransportRoute, hostId: String, tls: InnerTlsConfig, method: String, frame: ByteArray): JSONObject {
         var carrier: Socket? = null
-        var inner: SSLSocket? = null
+        var inner: Socket? = null
         var requestWritten = false
+        val epoch = generation.get()
+        val tracked = mutableListOf<Socket>()
+        fun track(socket: Socket) {
+            active.add(socket); tracked.add(socket)
+            if (generation.get() != epoch) { socket.close(); throw IOException("transport_cancelled") }
+        }
         try {
-            carrier = openCarrier(route, hostId)
+            carrier = openCarrier(route, hostId, ::track)
             val context = innerContext(tls)
             val peerPort = when (route) {
                 is TransportRoute.Direct -> route.endpoint.port
                 is TransportRoute.Relay -> route.endpoint.port
             }
-            inner = context.socketFactory.createSocket(carrier, tls.serverName, peerPort, true) as? SSLSocket
-                ?: throw BridgeFailure("tls_unavailable", deliveryUnknown = false)
-            inner.soTimeout = TLS_HANDSHAKE_TIMEOUT_MS
-            inner.useClientMode = true
-            val protocols = inner.supportedProtocols.filter { it == "TLSv1.3" || it == "TLSv1.2" }.toTypedArray()
-            if (protocols.isEmpty()) throw BridgeFailure("tls_unavailable", deliveryUnknown = false)
-            inner.enabledProtocols = protocols
-            val parameters = inner.sslParameters
-            parameters.endpointIdentificationAlgorithm = "HTTPS"
-            inner.sslParameters = parameters
-            inner.startHandshake()
+            inner = if (carrier is WebSocketCarrier) {
+                EngineTlsSocket(context, carrier, tls.serverName, peerPort)
+            } else {
+                val secure = context.socketFactory.createSocket(carrier, tls.serverName, peerPort, true) as? SSLSocket
+                    ?: throw BridgeFailure("tls_unavailable", deliveryUnknown = false)
+                secure.soTimeout = TLS_HANDSHAKE_TIMEOUT_MS
+                secure.useClientMode = true
+                val protocols = secure.supportedProtocols.filter { it == "TLSv1.3" || it == "TLSv1.2" }.toTypedArray()
+                if (protocols.isEmpty()) throw BridgeFailure("tls_unavailable", deliveryUnknown = false)
+                secure.enabledProtocols = protocols
+                secure.sslParameters = secure.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
+                secure.startHandshake()
+                secure
+            }
             inner.soTimeout = TLS_READ_TIMEOUT_MS
 
             requestWritten = true
@@ -254,7 +285,13 @@ private class SecureRouteExchange : RouteExchange {
             output.flush()
             val responseLine = readLine(inner, MAX_FRAME_BYTES, method = method)
             return try {
-                parseResponse(responseLine, method)
+                val result = parseResponse(responseLine, method)
+                val envelope = JSONObject(decodeUtf8(responseLine))
+                if (envelope.has("relayTicket")) {
+                    val ticket = envelope.opt("relayTicket") as? String ?: throw IOException("invalid_relay_ticket")
+                    tls.onRelayTicket?.invoke(ticket)
+                }
+                result
             } finally {
                 responseLine.fill(0)
             }
@@ -276,13 +313,15 @@ private class SecureRouteExchange : RouteExchange {
             throw BridgeFailure("transport_failed", deliveryUnknown = method == "submit" && requestWritten, requestWritten = requestWritten)
         } finally {
             try { inner?.close() ?: carrier?.close() } catch (_: Exception) { }
+            tracked.forEach { active.remove(it) }
         }
     }
 
-    private fun openCarrier(route: TransportRoute, hostId: String): Socket = when (route) {
+    private fun openCarrier(route: TransportRoute, hostId: String, track: (Socket) -> Unit): Socket = when (route) {
         is TransportRoute.Direct -> {
             val socket = Socket()
             try {
+                track(socket)
                 socket.connect(InetSocketAddress(route.endpoint.host, route.endpoint.port), DIRECT_CONNECT_TIMEOUT_MS)
                 socket.soTimeout = TLS_READ_TIMEOUT_MS
                 socket
@@ -291,15 +330,18 @@ private class SecureRouteExchange : RouteExchange {
                 throw BridgeFailure("direct_route_unavailable", deliveryUnknown = false)
             }
         }
-        is TransportRoute.Relay -> openRelayCarrier(route.endpoint, hostId)
+        is TransportRoute.Relay -> if (route.endpoint.transport == "wss") {
+            WebSocketCarrier(route.endpoint, hostId, relayContext(route.endpoint), track)
+        } else openRelayCarrier(route.endpoint, hostId, track)
     }
 
-    private fun openRelayCarrier(relay: RelayEndpoint, hostId: String): SSLSocket {
+    private fun openRelayCarrier(relay: RelayEndpoint, hostId: String, track: (Socket) -> Unit): SSLSocket {
         var raw: Socket? = null
         var outer: SSLSocket? = null
         try {
             val socket = Socket()
             raw = socket
+            track(socket)
             socket.connect(InetSocketAddress(relay.host, relay.port), RELAY_CONNECT_TIMEOUT_MS)
             socket.soTimeout = TLS_READ_TIMEOUT_MS
             val context = relayContext(relay)

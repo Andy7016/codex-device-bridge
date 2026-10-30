@@ -143,7 +143,8 @@ class PairingRepository internal constructor(
     }
 
     private fun consumeStatus(invite: PairingInvite, pending: PendingPairing, result: JSONObject): PairingProgress {
-        if (result.keys().asSequence().toSet() != STATUS_RESPONSE_FIELDS) throw PairingException("pairing_response_invalid")
+        val hasTicket = invite.relay.transport == "wss" && result.opt("state") == "approved"
+        if (result.keys().asSequence().toSet() != STATUS_RESPONSE_FIELDS + (if (hasTicket) setOf("relayTicket") else emptySet())) throw PairingException("pairing_response_invalid")
         val state = result.optString("state")
         val code = result.optString("confirmationCode")
         val expiresAt = (result.opt("expiresAt") as? Number)?.toString()?.toLongOrNull()
@@ -158,7 +159,8 @@ class PairingRepository internal constructor(
                 PairingProgress(PairingPhase.DENIED, invite.displayName, code, expiresAt, pending.requestId)
             }
             "approved" -> {
-                val profile = profiles.completePairing(invite, pending.keyAlias, pending.clientCertificateSha256)
+                val profile = profiles.completePairing(invite, pending.keyAlias, pending.clientCertificateSha256,
+                    if (hasTicket) result.opt("relayTicket") as? String ?: throw PairingException("pairing_response_invalid") else null)
                 pairingStore.clear()
                 PairingProgress(PairingPhase.APPROVED, invite.displayName, code, expiresAt, pending.requestId, profile)
             }

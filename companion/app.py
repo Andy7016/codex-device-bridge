@@ -15,6 +15,7 @@ from .startup import SettingsDialog, StartupWizard, explain, startup_directory
 class Window:
     def __init__(self, root, host):
         self.root, self.host, self.invitation = root, host, None
+        self.update_expires = None
         self.closing = False
         self.reopen_config = None
         root.title('Device Bridge · 电脑连接')
@@ -30,6 +31,7 @@ class Window:
         ttk.Button(controls, text='连接与会话范围设置', command=self.settings).pack(side='left')
         ttk.Button(controls, text='新建配置', command=self.new_configuration).pack(side='left', padx=8)
         ttk.Button(controls, text='打开其他 host.json', command=self.open_configuration).pack(side='left')
+        ttk.Button(controls, text='导出WSS中继登记', command=self.export_registration).pack(side='left', padx=8)
         if not host.identity.get('relay'):
             ttk.Label(body, text='本机身份已准备好。尚未配置中继，暂不能扫码连接；可先保留配置，稍后补填。', wraplength=950).pack(anchor='w', pady=6)
         panel = ttk.Frame(body)
@@ -67,6 +69,7 @@ class Window:
         self.devices = tk.Listbox(body, height=5, exportselection=False)
         self.devices.pack(fill='x')
         ttk.Button(body, text='撤销所选设备', command=self.revoke).pack(anchor='e', pady=8)
+        ttk.Button(body, text='为所选设备生成连接更新二维码', command=self.connection_update).pack(anchor='e', pady=4)
         ttk.Label(body, text='电脑身份：'+host.identity['hostId'][:24]+'…').pack(anchor='w')
         ttk.Label(body, text='配置：'+str(host.config_path), wraplength=1000).pack(anchor='w', pady=4)
         ttk.Label(body, text='关闭窗口会停止服务。中继仅转发端到端加密流量。').pack(anchor='w', pady=8)
@@ -76,6 +79,7 @@ class Window:
 
     def new_invite(self):
         try:
+            self.update_expires = None
             self.invitation = self.host.pairing.invite()
             image = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=3, border=4)
             image.add_data(self.invitation['text'])
@@ -91,6 +95,34 @@ class Window:
         if dialog.saved:
             self.reopen_config = self.host.config_path
             self.close()
+
+    def connection_update(self):
+        selection = self.devices.curselection()
+        if not selection:
+            return
+        try:
+            self.cancel_invite()
+            text = self.host.connection_update(self.device_rows[selection[0]]['device'])
+            image = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=3, border=4)
+            image.add_data(text); image.make(fit=True)
+            self.photo = ImageTk.PhotoImage(image.make_image().get_image())
+            self.qr.configure(image=self.photo, text='')
+            self.update_expires = int(time.time()) + 120
+            self.countdown.configure(text='连接更新有效期120秒；手机扫码后沿用原身份和操作记录。')
+        except Exception:
+            messagebox.showerror('无法更新连接', '请选择仍获授权的设备，并在设置中填写WSS中继地址。')
+
+    def export_registration(self):
+        from .admission import registration
+        from .configuration import write_json
+        path = filedialog.asksaveasfilename(parent=self.root, title='导出中继登记（不含电脑私钥或原始凭据）',
+            initialfile='relay-registration-wss.json', defaultextension='.json', filetypes=[('JSON', '*.json')])
+        if path:
+            try:
+                write_json(path, registration(self.host.identity['serverCertificatePem'], self.host.private['relayToken']))
+                messagebox.showinfo('登记已导出', '将此文件的完整JSON填入中继的RELAY_REGISTRATIONS_JSON配置。不要上传private.dpapi。', parent=self.root)
+            except Exception:
+                messagebox.showerror('导出未完成', '无法保存中继登记，请检查输出位置。', parent=self.root)
 
     def new_configuration(self):
         self.reopen_config = ''  # return to the wizard after releasing the old journal lease
@@ -108,6 +140,7 @@ class Window:
                 messagebox.showerror('配置未导入', explain(error), parent=self.root)
 
     def cancel_invite(self):
+        self.update_expires = None
         if self.invitation:
             self.host.pairing.deny(self.invitation['packet']['inviteId'])
         self.invitation = None
@@ -168,6 +201,11 @@ class Window:
         if self.invitation:
             left = self.invitation['packet']['expiresAt']-int(time.time())
             self.countdown.configure(text=f'有效期剩余 {max(0, left)} 秒')
+            if left <= 0:
+                self.cancel_invite()
+        elif self.update_expires:
+            left = self.update_expires - int(time.time())
+            self.countdown.configure(text=f'更新原设备连接 · 有效期剩余 {max(0, left)} 秒')
             if left <= 0:
                 self.cancel_invite()
         else:

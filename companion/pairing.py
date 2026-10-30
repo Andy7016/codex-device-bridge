@@ -12,8 +12,9 @@ from .security import certificate, confirmation, fingerprint, proof_bytes, sha25
 
 
 class Pairing:
-    def __init__(self, journal, service, identity, *, clock=time.time):
+    def __init__(self, journal, service, identity, *, clock=time.time, ticket_issuer=None):
         self.journal, self.service, self.identity, self.clock = journal, service, identity, clock
+        self.ticket_issuer = ticket_issuer
         with journal.lock, journal.db:
             journal.db.executescript('''
                 CREATE TABLE IF NOT EXISTS pairing_invites(
@@ -39,6 +40,11 @@ class Pairing:
             self.journal.db.execute('INSERT INTO pairing_invites(id,secret_hash,expires,state) VALUES(?,?,?,?)',
                                     (identity, sha256(secret.encode()), expires, 'issued'))
             packet = {**self.identity, 'schemaVersion': 1, 'inviteId': identity, 'inviteSecret': secret, 'expiresAt': expires}
+            if self.identity['relay'].get('transport') == 'wss':
+                if self.ticket_issuer is None:
+                    raise ValueError('relay_ticket_issuer_required')
+                packet['schemaVersion'] = 2
+                packet['relay'] = {**self.identity['relay'], 'ticket': self.ticket_issuer('invite:' + identity, expires=expires + 600)}
             payload = json.dumps(packet, ensure_ascii=False, separators=(',', ':')).encode()
             if len(payload) > 8192:
                 raise ValueError('invitation_too_large')
@@ -64,8 +70,11 @@ class Pairing:
     def _result(self, row):
         if row['state'] == 'approved':
             self.journal.authorize_device('phone-'+fingerprint(certificate(row['certificate'])))
-        return {'state': 'approved' if row['state'] == 'approved' else 'pending',
-                'confirmationCode': row['code'], 'expiresAt': row['expires']}
+        result = {'state': 'approved' if row['state'] == 'approved' else 'pending',
+                  'confirmationCode': row['code'], 'expiresAt': row['expires']}
+        if row['state'] == 'approved' and self.identity.get('relay', {}).get('transport') == 'wss':
+            result['relayTicket'] = self.ticket_issuer('phone:' + fingerprint(certificate(row['certificate'])))
+        return result
 
     def call(self, method, params):
         expected = {'inviteId', 'inviteSecret', 'requestId', 'phoneName', 'clientCertificatePem'} if method == 'pair.begin' else {'inviteId', 'inviteSecret', 'requestId', 'signature'}

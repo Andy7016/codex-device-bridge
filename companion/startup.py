@@ -18,7 +18,7 @@ def explain(error):
     if isinstance(error, FileExistsError):
         return '保存目录已存在。请选择新目录，或打开原 host.json；不会覆盖已有身份。'
     messages = {
-        'invalid_relay': '中继地址应为域名或IP，不包含 https://、路径或空白。',
+        'invalid_relay': '中继请填写 wss://域名，或旧版原始TLS的域名/IP；不包含账号、查询参数或其他路径。',
         'invalid_port': '端口应为1至65535的整数。',
         'relay_address_required': '请填写中继地址，或选择稍后配置。',
         'invalid_display_name': '设备名称需要1至80个字符，且不包含控制字符。',
@@ -35,14 +35,17 @@ class ConnectionFields:
     def __init__(self, parent, existing=None):
         existing = existing or {}
         self.deferred = tk.BooleanVar(master=parent, value=not bool(existing))
-        self.host = tk.StringVar(master=parent, value=existing.get('host', ''))
+        address = existing.get('host', '')
+        if existing.get('transport') == 'wss':
+            address = 'wss://' + ('[' + address + ']' if ':' in address else address) + ':' + str(existing.get('port', 443))
+        self.host = tk.StringVar(master=parent, value=address)
         self.port = tk.StringVar(master=parent, value=str(existing.get('port', 443)))
         self.certificate = tk.StringVar(master=parent)
         self.system_trust = tk.BooleanVar(master=parent, value=not bool(existing.get('certificatePem')))
         frame = ttk.LabelFrame(parent, text='中继连接（现在可以跳过）', padding=10)
         frame.pack(fill='x', pady=10)
         ttk.Checkbutton(frame, text='稍后配置中继，先完成本机初始化', variable=self.deferred, command=self.toggle).grid(row=0, column=0, columnspan=3, sticky='w')
-        ttk.Label(frame, text='域名或IP').grid(row=1, column=0, sticky='w', pady=5)
+        ttk.Label(frame, text='WSS地址或域名/IP').grid(row=1, column=0, sticky='w', pady=5)
         host = ttk.Entry(frame, textvariable=self.host, width=42)
         host.grid(row=1, column=1, sticky='ew')
         ttk.Label(frame, text='端口').grid(row=2, column=0, sticky='w', pady=5)

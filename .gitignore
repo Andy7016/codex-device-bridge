@@ -13,6 +13,7 @@
 local.properties
 secrets/
 credentials/
+relay-registration*.json
 
 # Private runtime state and captured session data
 .local/
@@ -37,6 +38,9 @@ captures/
 .kotlin/
 **/build/
 node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
 dist/
 coverage/
 .venv/

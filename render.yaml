@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: device-bridge-relay
+    runtime: node
+    region: singapore
+    plan: free
+    rootDir: relay
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 22.22.0
+      - key: RELAY_BIND
+        value: 0.0.0.0
+      - key: RELAY_REGISTRATIONS_JSON
+        sync: false

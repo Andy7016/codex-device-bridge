@@ -85,6 +85,9 @@ class TLSStream:
 
 
 def relay_connect(endpoint, preface, *, timeout=50, on_socket=None):
+    if endpoint.get('transport') == 'wss':
+        from .websocket_transport import connect
+        return connect(endpoint, preface, timeout=timeout, on_socket=on_socket)
     from .security import client_context, check_pin
     plain = socket.create_connection((endpoint['host'], endpoint['port']), timeout=8)
     try:

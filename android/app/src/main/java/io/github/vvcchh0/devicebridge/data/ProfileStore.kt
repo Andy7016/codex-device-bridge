@@ -93,7 +93,7 @@ class ProfileStore(context: Context) {
             val version = exactInt(root.opt("schemaVersion")) ?: throw ProfileStoreException("invalid_profile")
             val profile = when (version) {
                 1 -> parseV1(root)
-                2 -> parseV2(root)
+                2, 3 -> parseV2(root)
                 else -> throw ProfileStoreException("unsupported_profile_version")
             }
             try {
@@ -112,15 +112,16 @@ class ProfileStore(context: Context) {
     }
 
     /** Writes a v2 profile after proof-backed approval. Invite secrets are intentionally omitted. */
-    fun completePairing(invite: PairingInvite, alias: String, clientCertificateSha256: String): ConnectionProfile {
+    fun completePairing(invite: PairingInvite, alias: String, clientCertificateSha256: String, relayTicket: String? = null): ConnectionProfile {
         val direct = org.json.JSONArray()
         invite.directEndpoints.forEach { direct.put(JSONObject().put("host", it.host).put("port", it.port)) }
-        val relay = JSONObject()
-            .put("host", invite.relay.host)
-            .put("port", invite.relay.port)
-            .put("certificatePem", invite.relay.certificatePem ?: JSONObject.NULL)
+        val relay = if (invite.relay.transport == "wss") {
+            val ticket = relayTicket ?: throw ProfileStoreException("relay_ticket_missing")
+            RelayTicket.validate(ticket, invite.hostId, "phone:$clientCertificateSha256", invite.serverCertificatePem)
+            invite.relay.withTicket(ticket).json()
+        } else invite.relay.json()
         val json = JSONObject()
-            .put("schemaVersion", 2)
+            .put("schemaVersion", if (invite.relay.transport == "wss") 3 else 2)
             .put("displayName", invite.displayName)
             .put("hostId", invite.hostId)
             .put("serverName", invite.serverName)
@@ -145,7 +146,7 @@ class ProfileStore(context: Context) {
             val root = parseJson(decodeUtf8(bytes))
             when (exactInt(root.opt("schemaVersion"))) {
                 1 -> parseV1(root)
-                2 -> parseV2(root)
+                2, 3 -> parseV2(root)
                 else -> throw ProfileStoreException("unsupported_profile_version")
             }
         } catch (e: ProfileStoreException) {
@@ -164,6 +165,47 @@ class ProfileStore(context: Context) {
         } catch (e: VaultException) {
             throw ProfileStoreException(e.code)
         }
+    }
+
+    /** Hourly at most; a stale response cannot replace a different selected profile. */
+    internal fun refreshRelayTicket(profileId: String, ticket: String) = synchronized(STORE_LOCK) {
+        if (!vault.exists()) return@synchronized
+        val bytes = vault.read(MAX_PROFILE_JSON_BYTES)
+        try {
+            val root = parseJson(decodeUtf8(bytes))
+            if (exactInt(root.opt("schemaVersion")) != 3) return@synchronized
+            val current = parseV2(root)
+            if (current.id != profileId) return@synchronized
+            val expires = RelayTicket.validate(ticket, current.hostId!!, "phone:${current.clientCertificateSha256}", current.serverCertificatePem)
+            val old = RelayTicket.validate(current.relay!!.ticket()!!, current.hostId, "phone:${current.clientCertificateSha256}", current.serverCertificatePem, allowExpired = true)
+            if (expires < old + 3600) return@synchronized
+            root.getJSONObject("relay").put("ticket", ticket)
+            val updated = root.toString().toByteArray(Charsets.UTF_8)
+            try { vault.write(updated, MAX_PROFILE_JSON_BYTES) } finally { updated.fill(0) }
+        } finally { bytes.fill(0) }
+    }
+
+    fun applyConnectionUpdate(qr: String): ConnectionProfile = synchronized(STORE_LOCK) {
+        val current = load() ?: throw ProfileStoreException("paired_profile_required")
+        if (current.schemaVersion !in setOf(2, 3)) throw ProfileStoreException("paired_profile_required")
+        val signed = RelayTicket.connectionUpdate(qr, current.serverCertificatePem)
+        val now = System.currentTimeMillis() / 1000
+        val issued = (signed.opt("iat") as? Number)?.toString()?.toLongOrNull() ?: throw ProfileStoreException("invalid_connection_update")
+        val expires = (signed.opt("exp") as? Number)?.toString()?.toLongOrNull() ?: throw ProfileStoreException("invalid_connection_update")
+        if (signed.keys().asSequence().toSet() != setOf("iss", "sub", "aud", "iat", "exp", "jti", "relay") ||
+            signed.opt("iss") != current.hostId || signed.opt("sub") != "phone:${current.clientCertificateSha256}" ||
+            signed.opt("aud") != "device-bridge-route-update-v1" || issued > now + 30 || expires <= now || expires <= issued || expires - issued > 120 ||
+            !(signed.opt("jti") as? String ?: "").matches(Regex("[0-9a-f]{32}"))) throw ProfileStoreException("invalid_connection_update")
+        val relay = parseRelay(signed.opt("relay"), true)
+        RelayTicket.validate(relay.ticket()!!, current.hostId!!, "phone:${current.clientCertificateSha256}", current.serverCertificatePem)
+        val bytes = vault.read(MAX_PROFILE_JSON_BYTES)
+        try {
+            val root = parseJson(decodeUtf8(bytes)).put("schemaVersion", 3).put("relay", relay.json())
+            if (parseV2(root).id != current.id) throw ProfileStoreException("profile_identity_changed")
+            val result = importJson(root.toString())
+            if (result.id != current.id) throw ProfileStoreException("profile_identity_changed")
+            result
+        } finally { bytes.fill(0) }
     }
 
     private fun parseV1(root: JSONObject): ConnectionProfile {
@@ -197,7 +239,8 @@ class ProfileStore(context: Context) {
 
     private fun parseV2(root: JSONObject): ConnectionProfile {
         requireKeys(root, V2_KEYS)
-        if (exactInt(root.opt("schemaVersion")) != 2) throw ProfileStoreException("invalid_profile")
+        val version = exactInt(root.opt("schemaVersion"))
+        if (version !in setOf(2, 3)) throw ProfileStoreException("invalid_profile")
         val displayName = validateDisplayName(requiredString(root, "displayName", 1, 80))
         val hostId = requiredString(root, "hostId", 64, 64)
         if (!SHA256_PATTERN.matches(hostId)) throw ProfileStoreException("invalid_profile")
@@ -211,12 +254,13 @@ class ProfileStore(context: Context) {
             ?: throw ProfileStoreException("invalid_host_certificate")
         if (!isP256(hostKey.params) || sha256Hex(hostKey.encoded) != hostId) throw ProfileStoreException("host_identity_mismatch")
 
-        val relay = parseRelay(root.opt("relay"))
+        val relay = parseRelay(root.opt("relay"), version == 3)
         val endpoints = parseDirectEndpoints(root.opt("directEndpoints"))
 
         val alias = requiredString(root, "clientKeyAlias", 1, MAX_ALIAS_CHARS)
         val clientPin = requiredString(root, "clientCertificateSha256", 64, 64)
         if (!SHA256_PATTERN.matches(clientPin)) throw ProfileStoreException("invalid_profile")
+        if (version == 3) RelayTicket.validate(relay.ticket() ?: "", hostId, "phone:$clientPin", serverPem, allowExpired = true)
         try {
             val identity = AndroidDeviceIdentity().load(alias)
             if (identity.certificateSha256 != clientPin) throw ProfileStoreException("client_identity_mismatch")
@@ -234,7 +278,7 @@ class ProfileStore(context: Context) {
         return ConnectionProfile(
             id = id,
             displayName = displayName,
-            schemaVersion = 2,
+            schemaVersion = version!!,
             host = displayedRoute,
             port = displayedPort,
             serverCertificatePem = serverPem,
@@ -248,9 +292,9 @@ class ProfileStore(context: Context) {
         )
     }
 
-    private fun parseRelay(value: Any?): RelayEndpoint {
+    private fun parseRelay(value: Any?, wss: Boolean = false): RelayEndpoint {
         val json = value as? JSONObject ?: throw ProfileStoreException("invalid_profile")
-        if (json.keys().asSequence().toSet() != RELAY_KEYS) throw ProfileStoreException("invalid_profile")
+        if (json.keys().asSequence().toSet() != RELAY_KEYS + (if (wss) setOf("transport", "path", "ticket") else emptySet())) throw ProfileStoreException("invalid_profile")
         val host = try { PairingQr.normalizeEndpointHost(requiredString(json, "host", 1, 253)) }
         catch (_: PairingException) { throw ProfileStoreException("invalid_profile") }
         val port = exactInt(json.opt("port"))?.takeIf { it in 1..65535 } ?: throw ProfileStoreException("invalid_profile")
@@ -262,6 +306,10 @@ class ProfileStore(context: Context) {
                 certificate
             }
             else -> throw ProfileStoreException("invalid_profile")
+        }
+        if (wss) {
+            if (json.opt("transport") != "wss" || json.opt("path") != "/v1/relay") throw ProfileStoreException("invalid_profile")
+            return RelayEndpoint(host, port, pem, "wss", "/v1/relay", requiredString(json, "ticket", 100, 2048))
         }
         return RelayEndpoint(host, port, pem)
     }

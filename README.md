@@ -1,3 +1,11 @@
+# 托管中继验证版 v0.3
+
+新增Cloudflare Workers + SQLite Durable Objects与Render Web Service的共用WSS传输方案。客户端保留端到端mTLS、稳定设备身份及原操作恢复；更换入口支持给原设备签发连接更新二维码。部署与Render逐步操作见[relay/README.md](relay/README.md)。
+
+该版先完成自有回环与模拟器验证；公网部署、真实运营商和VPN切换结果需独立记录。
+
+以下保留先前版本的实现与操作说明。
+
 # Codex Device Bridge
 
 面向 Android 的设备会话客户端：通过独立连接通路，访问指定 Windows 电脑上已有的 ChatGPT 与 Codex 会话。

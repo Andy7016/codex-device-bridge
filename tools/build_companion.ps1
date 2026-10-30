@@ -1,4 +1,4 @@
-param([string]$Version = '0.2.1', [string]$Python = '')
+param([string]$Version = '0.3.0', [string]$Python = '')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid companion version' }
 $taskRoot = Split-Path -Parent $PSScriptRoot
@@ -19,5 +19,5 @@ if (Test-Path -LiteralPath $taskProgram) {
     $taskContents = Get-ChildItem -LiteralPath $taskResolved -Recurse -Force
     if ($taskContents | Where-Object { $_.Name -eq 'devicebridge-data' -or $_.Extension -in @('.dpapi','.sqlite') -or $_.Name -eq 'startup.json' -or $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) { throw 'Runtime data or links found; choose a new version/output instead of replacing it' }
 }
-& $taskPython -m PyInstaller --name DeviceBridge-Companion --windowed --onedir --noupx --noconfirm --paths $taskRoot --add-data "${taskAssets}:desktop" --distpath $taskDist --workpath (Join-Path $taskRoot '.local/companion-build') --specpath (Join-Path $taskRoot '.local/companion-build') (Join-Path $taskRoot 'tools/companion_entry.py')
+& $taskPython -m PyInstaller --name DeviceBridge-Companion --windowed --onedir --noupx --noconfirm --collect-submodules websockets --paths $taskRoot --add-data "${taskAssets}:desktop" --distpath $taskDist --workpath (Join-Path $taskRoot '.local/companion-build') --specpath (Join-Path $taskRoot '.local/companion-build') (Join-Path $taskRoot 'tools/companion_entry.py')
 if ($LASTEXITCODE -ne 0) { throw 'Companion build failed' }

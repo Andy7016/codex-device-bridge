@@ -16,6 +16,8 @@ class BridgeRepository(context: Context, private val transport: BridgeTransport 
     val profiles = ProfileStore(context)
     val outbox = OperationStore(context)
     val pairing = PairingRepository(context, transport)
+    init { transport.relayTicketSink = { id, ticket -> profiles.refreshRelayTicket(id, ticket) } }
+    fun cancelTransport() = transport.cancelActive()
 
     fun catalog(profile: ConnectionProfile): List<SessionInfo> {
         val list = transport.request(profile, "catalog", JSONObject()).getJSONArray("sessions")

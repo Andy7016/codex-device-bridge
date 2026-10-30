@@ -8,6 +8,7 @@ import secrets
 import tempfile
 import time
 import uuid
+from urllib.parse import urlsplit
 
 from .security import certificate, fingerprint, generate_identity, private_address, protect, public_id, sha256
 
@@ -42,6 +43,17 @@ def relay_endpoint(host=None, port=443, certificate_path=None):
         if certificate_path:
             raise ValueError('relay_address_required')
         return None
+    if isinstance(host, str) and (host != host.strip() or any(ord(c) <= 32 or ord(c) == 127 for c in host)):
+        raise ValueError('invalid_relay')
+    wss = isinstance(host, str) and host.startswith('wss://')
+    if wss:
+        try:
+            url = urlsplit(host)
+            if url.username or url.password or url.query or url.fragment or url.path not in ('', '/', '/v1/relay') or not url.hostname:
+                raise ValueError('invalid_relay')
+            host, port = url.hostname, url.port or 443
+        except ValueError:
+            raise ValueError('invalid_relay') from None
     if not isinstance(host, str) or host != host.strip() or not 1 <= len(host) <= 253 or any(c.isspace() or c in '/\\@#?%[]' for c in host):
         raise ValueError('invalid_relay')
     try:
@@ -57,7 +69,24 @@ def relay_endpoint(host=None, port=443, certificate_path=None):
         with Path(certificate_path).open('rb') as source:
             pem = source.read(8193).replace(b'\r\n', b'\n').decode('ascii')
         certificate(pem)
-    return {'host': host, 'port': port, 'certificatePem': pem}
+    endpoint = {'host': host, 'port': port, 'certificatePem': pem}
+    if wss:
+        endpoint.update(transport='wss', path='/v1/relay')
+    return endpoint
+
+
+def validate_relay(value):
+    if not isinstance(value, dict):
+        raise ValueError('invalid_relay')
+    keys = {'host', 'port', 'certificatePem'}
+    wss = value.get('transport') == 'wss'
+    if set(value) != keys | ({'transport', 'path'} if wss else set()):
+        raise ValueError('invalid_relay')
+    relay_endpoint(value['host'], value['port'])
+    if wss and value['path'] != '/v1/relay':
+        raise ValueError('invalid_relay')
+    if value['certificatePem'] is not None:
+        certificate(value['certificatePem'])
 
 
 def policy_snapshot(path=None):
@@ -99,6 +128,8 @@ def prepare(output, policy=None, relay_host=None, relay_port=443, relay_certific
     (output/'server.pem').write_text(pem, encoding='ascii')
     write_json(output/'policy.json', selected_policy)
     write_json(output/'relay-registration.json', {identity: sha256(token.encode())})
+    from .admission import registration
+    write_json(output/'relay-registration-wss.json', registration(pem, token))
     write_json(output/'host.json', config)  # completion marker, written last
     return {'directory': str(output), 'hostId': identity, 'listenerStarted': False}
 
@@ -121,11 +152,7 @@ def load_configuration(path):
         raise ValueError('host_identity_mismatch')
     relay = identity.get('relay')
     if relay is not None:
-        if not isinstance(relay, dict) or set(relay) != {'host', 'port', 'certificatePem'}:
-            raise ValueError('invalid_relay')
-        relay_endpoint(relay['host'], relay['port'])
-        if relay['certificatePem'] is not None:
-            certificate(relay['certificatePem'])
+        validate_relay(relay)
     policy = config.get('policy')
     if not isinstance(policy, str) or not policy:
         raise ValueError('invalid_policy')

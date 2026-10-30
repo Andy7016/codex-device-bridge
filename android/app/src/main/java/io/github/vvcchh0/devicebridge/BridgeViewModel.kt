@@ -2,6 +2,8 @@ package io.github.vvcchh0.devicebridge
 
 import android.app.Application
 import android.net.Uri
+import android.net.Network
+import android.net.ConnectivityManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.vvcchh0.devicebridge.data.BridgeFailure
@@ -36,6 +38,9 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     private var pairingPolling: Job? = null
     private var actionJob: Job? = null
     private var foreground = false
+    private val connectivity = application.getSystemService(ConnectivityManager::class.java)
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var networkGeneration = 0
 
     init {
         action {
@@ -91,6 +96,14 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     fun beginPairing() = pairingAction {
         val qr = mutable.value.pairingInput.trim()
         if (qr.isEmpty()) throw PairingException("pairing_qr_required")
+        if (qr.startsWith("dbroute:")) {
+            val updated = withContext(Dispatchers.IO) { repository.profiles.applyConnectionUpdate(qr) }
+            polling?.cancel(); profile = updated
+            mutable.value = UiState(profileName = updated.displayName, endpoint = "${updated.host}:${updated.port}",
+                operations = withContext(Dispatchers.IO) { repository.outbox.load(updated.id) }, busy = true,
+                notice = "连接已更新，原手机身份、授权和操作记录已保留。点击连接核对状态。")
+            return@pairingAction
+        }
         val progress = withContext(Dispatchers.IO) { repository.pairing.startOrResume(qr) }
         applyPairingProgress(progress)
     }
@@ -123,7 +136,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun disconnect() {
-        actionJob?.cancel(); polling?.cancel()
+        actionJob?.cancel(); polling?.cancel(); repository.cancelTransport()
         mutable.update { it.copy(connection = ConnectionStatus.DISCONNECTED, notice = "已断开，原操作记录保留在本机。", demo = false) }
     }
 
@@ -176,12 +189,49 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     fun setForeground(value: Boolean) {
         foreground = value
         if (value) {
+            observeNetwork()
             startPolling()
             if (mutable.value.pairingPhase == PairingPhase.WAITING_FOR_APPROVAL) startPairingPolling()
         } else {
+            networkGeneration++
+            networkCallback?.let { try { connectivity.unregisterNetworkCallback(it) } catch (_: Exception) { } }
+            networkCallback = null
             polling?.cancel()
             pairingPolling?.cancel()
         }
+    }
+
+    private fun observeNetwork() {
+        if (networkCallback != null) return
+        val generation = ++networkGeneration
+        var last: Network? = null
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val hasChanged = last != null && last != network
+                last = network
+                if (hasChanged) changed()
+            }
+            override fun onLost(network: Network) {
+                if (last == network) { last = null; changed() }
+            }
+            private fun changed() {
+                viewModelScope.launch {
+                    if (!foreground || generation != networkGeneration || mutable.value.demo ||
+                        mutable.value.connection == ConnectionStatus.DISCONNECTED) return@launch
+                    repository.cancelTransport()
+                    startPolling()
+                }
+            }
+        }
+        try { connectivity.registerDefaultNetworkCallback(callback); networkCallback = callback }
+        catch (_: Exception) { /* Timed requests and foreground polling remain available. */ }
+    }
+
+    override fun onCleared() {
+        networkGeneration++
+        networkCallback?.let { try { connectivity.unregisterNetworkCallback(it) } catch (_: Exception) { } }
+        repository.cancelTransport()
+        super.onCleared()
     }
 
     private fun pairingAction(block: suspend () -> Unit) {
@@ -261,7 +311,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun startPolling() {
         polling?.cancel()
-        if (!foreground || mutable.value.demo || mutable.value.connection != ConnectionStatus.CONNECTED) return
+        if (!foreground || mutable.value.demo || profile == null || mutable.value.connection !in setOf(ConnectionStatus.CONNECTED, ConnectionStatus.ERROR)) return
         polling = viewModelScope.launch {
             var failures = 0
             while (foreground && !mutable.value.demo && mutable.value.connection != ConnectionStatus.DISCONNECTED) {
@@ -269,6 +319,10 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 if (mutable.value.busy) continue
                 val p = profile ?: break
                 try {
+                    if (mutable.value.sessions.isEmpty()) {
+                        val sessions = withContext(Dispatchers.IO) { repository.catalog(p) }
+                        mutable.update { it.copy(sessions = sessions, selectedSession = sessions.firstOrNull()?.label) }
+                    }
                     refreshData(p); failures = 0
                     mutable.update { it.copy(connection = ConnectionStatus.CONNECTED, error = null) }
                 } catch (cancelled: CancellationException) { throw cancelled }
@@ -318,7 +372,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 mutable.update { it.copy(error = explain(error), connection = if (profile != null && !it.demo) ConnectionStatus.ERROR else it.connection) }
             } finally {
                 mutable.update { it.copy(busy = false) }
-                if (mutable.value.connection == ConnectionStatus.CONNECTED) startPolling()
+                if (mutable.value.connection in setOf(ConnectionStatus.CONNECTED, ConnectionStatus.ERROR)) startPolling()
             }
         }
     }
