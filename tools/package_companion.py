@@ -9,7 +9,7 @@ import zipfile
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--version', default='0.3.4')
+    parser.add_argument('--version', default='0.3.7')
     args = parser.parse_args()
     if not re.fullmatch(r'\d+\.\d+\.\d+', args.version):
         raise ValueError('invalid_version')

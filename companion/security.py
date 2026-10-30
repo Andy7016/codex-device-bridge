@@ -153,6 +153,11 @@ def server_context(cert_path, key_pem, directory, phone_pems=()):
     context.verify_mode = ssl.CERT_OPTIONAL
     if phone_pems:
         context.load_verify_locations(cadata='\n'.join(phone_pems))
+        # Paired phone leaves are exact trust anchors, not issuing CAs. Stop
+        # at the matching enrolled leaf instead of selecting another phone
+        # with the same Android certificate subject as its apparent issuer.
+        # Host.serve_connection still requires its exact enrolled fingerprint.
+        context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
     return context
 
 

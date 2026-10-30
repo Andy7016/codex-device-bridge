@@ -17,6 +17,9 @@ class PhoneStatus:
         'tls_failed': '手机TLS连接失败', 'interrupted': '手机通道中断或超时',
         'denied': '手机请求被拒绝', 'invalid': '手机请求格式不符',
         'conflict': '操作状态冲突', 'internal': '本机请求处理失败',
+        'history_large': '历史快照超过本版16MiB读取上限',
+        'desktop_unavailable': '桌面运行时暂不可读，请检查目标会话状态',
+        'history_changed': '历史分页已变化，请重新加载此会话',
     }
 
     def __init__(self):

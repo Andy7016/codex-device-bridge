@@ -171,7 +171,7 @@ internal class EncryptedVaultFile(context: Context, private val fileName: String
         const val ENVELOPE_OVERHEAD = HEADER_SIZE + GCM_NONCE_BYTES + GCM_TAG_BYTES
         const val MAX_ALLOWED_PLAINTEXT = 2 * 1024 * 1024
         val HEADER = byteArrayOf(0x44, 0x42, 0x56, 0x4c, 0x54, 0x30, 0x30, 0x31) // DBVLT001
-        val FILE_NAME_PATTERN = Regex("(?:profile|pending-pairing|operations-[0-9a-f]{64})\\.v1\\.enc")
+        val FILE_NAME_PATTERN = Regex("(?:profile|pending-pairing|(?:operations|history)-[0-9a-f]{64})\\.v1\\.enc")
         val FILE_LOCKS = ConcurrentHashMap<String, Any>()
 
         fun lockFor(file: File): Any = FILE_LOCKS.getOrPut(file.path) { Any() }

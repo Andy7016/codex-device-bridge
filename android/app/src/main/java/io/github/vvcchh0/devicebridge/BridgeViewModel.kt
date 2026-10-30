@@ -132,6 +132,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val sessions = withContext(Dispatchers.IO) { repository.catalog(p) }
         mutable.update { it.copy(sessions = sessions, selectedSession = sessions.firstOrNull()?.label,
             connection = ConnectionStatus.CONNECTED, messages = emptyList(), notice = null) }
+        sessions.firstOrNull()?.let { showCached(p, it.label) }
         refreshData(p)
     }
 
@@ -143,8 +144,8 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
     fun selectSession(label: String) = action {
         if (mutable.value.demo || mutable.value.sessions.none { it.label == label }) return@action
         nextBefore = null; historyExpanded = false
-        mutable.update { it.copy(selectedSession = label, messages = emptyList()) }
-        profile?.let { refreshData(it) }
+        mutable.update { it.copy(selectedSession = label, messages = emptyList(), historyCached = false, lastSync = null) }
+        profile?.let { showCached(it, label); refreshData(it) }
     }
 
     fun refresh() = action {
@@ -156,10 +157,19 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         val p = profile ?: return@action
         val label = mutable.value.selectedSession ?: return@action
         val cursor = nextBefore ?: return@action
-        val page = withContext(Dispatchers.IO) { repository.history(p, label, cursor) }
+        val page = try { withContext(Dispatchers.IO) { repository.history(p, label, cursor) } }
+        catch (e: io.github.vvcchh0.devicebridge.data.BridgeFailure) {
+            if (e.code == "denied") mutable.update { it.copy(messages = emptyList(), historyCached = false, hasMoreHistory = false) }
+            if (e.code != "history_changed") throw e
+            historyExpanded = false; nextBefore = null
+            refreshData(p)
+            mutable.update { it.copy(notice = "历史已变化，已重新加载最新内容。") }
+            return@action
+        }
         historyExpanded = true
         nextBefore = page.nextBefore
-        mutable.update { it.copy(messages = (page.messages + it.messages).distinctBy { item -> item.id }, hasMoreHistory = nextBefore != null) }
+        mutable.update { it.copy(messages = (page.messages + it.messages).distinctBy { item -> item.id }, hasMoreHistory = nextBefore != null,
+            notice = "已展开历史，自动刷新已暂停；点击刷新可重新核对。") }
     }
 
     fun send(text: String) = action {
@@ -181,6 +191,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
 
     fun forgetProfile() = action {
         polling?.cancel()
+        profile?.let { p -> withContext(Dispatchers.IO) { repository.forgetHistory(p) } }
         withContext(Dispatchers.IO) { repository.profiles.forget() }
         profile = null // Keep encrypted outbox, including unknown operations.
         mutable.value = UiState(busy = true, notice = "连接已移除，重新导入同一身份可继续核对原操作。")
@@ -315,8 +326,8 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         polling = viewModelScope.launch {
             var failures = 0
             while (foreground && !mutable.value.demo && mutable.value.connection != ConnectionStatus.DISCONNECTED) {
-                delay((3000L shl failures.coerceAtMost(3)).coerceAtMost(30000L))
-                if (mutable.value.busy) continue
+                delay((15000L shl failures.coerceAtMost(2)).coerceAtMost(60000L))
+                if (mutable.value.busy || historyExpanded) continue
                 val p = profile ?: break
                 try {
                     if (mutable.value.sessions.isEmpty()) {
@@ -328,7 +339,7 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: Exception) {
                     failures++
-                    mutable.update { it.copy(connection = ConnectionStatus.ERROR, error = explain(error)) }
+                    mutable.update { it.copy(connection = ConnectionStatus.ERROR, error = explain(error), historyCached = it.messages.isNotEmpty()) }
                     if (error is BridgeFailure && error.code == "denied") break
                 }
             }
@@ -346,7 +357,19 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { unresolved = true }
         }
-        val page = withContext(Dispatchers.IO) { repository.history(p, label) }
+        val page = try { withContext(Dispatchers.IO) { repository.history(p, label) } }
+        catch (e: io.github.vvcchh0.devicebridge.data.BridgeFailure) {
+            if (e.code == "denied") {
+                mutable.update { it.copy(messages = emptyList(), historyCached = false, hasMoreHistory = false) }
+                throw e
+            }
+            if (e.code != "history_changed") throw e
+            historyExpanded = false; nextBefore = null
+            val sessions = withContext(Dispatchers.IO) { repository.catalog(p) }
+            mutable.update { it.copy(sessions = sessions, messages = emptyList(), historyCached = false) }
+            if (sessions.none { it.label == label }) throw e
+            withContext(Dispatchers.IO) { repository.history(p, label) }
+        }
         val operations = withContext(Dispatchers.IO) { repository.outbox.load(p.id) }
         runtimeStatus = page.runtimeStatus
         if (!historyExpanded) nextBefore = page.nextBefore
@@ -356,9 +379,15 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
                 (old.messages + page.messages).forEach { merged[it.id] = it }
                 merged.values.toList()
             } else page.messages
-            old.copy(messages = messages, operations = operations, hasMoreHistory = nextBefore != null,
+            old.copy(messages = messages, operations = operations, hasMoreHistory = nextBefore != null, historyCached = false,
             notice = if (unresolved) "有原操作仍待核对，记录已保留；当前消息浏览不受影响。" else old.notice,
             lastSync = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())) }
+    }
+
+    private suspend fun showCached(p: ConnectionProfile, label: String) {
+        val page = withContext(Dispatchers.IO) { repository.cachedHistory(p, label) } ?: return
+        runtimeStatus = "unknown"
+        mutable.update { if (it.selectedSession == label) it.copy(messages = page.messages, historyCached = true) else it }
     }
 
     private fun action(block: suspend () -> Unit) {
@@ -369,7 +398,8 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             try { block() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
-                mutable.update { it.copy(error = explain(error), connection = if (profile != null && !it.demo) ConnectionStatus.ERROR else it.connection) }
+                mutable.update { it.copy(error = explain(error), connection = if (profile != null && !it.demo) ConnectionStatus.ERROR else it.connection,
+                    historyCached = !it.demo && it.messages.isNotEmpty()) }
             } finally {
                 mutable.update { it.copy(busy = false) }
                 if (mutable.value.connection in setOf(ConnectionStatus.CONNECTED, ConnectionStatus.ERROR)) startPolling()
@@ -395,6 +425,9 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         "transport_timeout", "transport_failed" -> "连接暂时不可用，请检查电脑在线状态。待核对操作不会重发。"
         "unresolved_operation_exists" -> "相同消息仍有待核对操作，请先核对原操作。"
         "message_not_authorized" -> "电脑当前只允许指定的测试消息。"
+        "desktop_unavailable" -> "电脑暂时无法读取存储历史，请确认本机Codex可用后刷新。"
+        "desktop_history_too_large" -> "历史数据超出本版读取范围，请更新电脑端后再试。"
+        "history_changed" -> "历史内容或分页已变化，请重新加载此会话。"
         else -> when ((error as? PairingException)?.code) {
             "invalid_pairing_qr", "unsupported_pairing_qr", "pairing_invite_expired" -> "配对二维码无效或已过期，请在电脑端重新生成。"
             "pending_pairing_exists" -> "本机已有未完成的配对请求，请先继续检查或移除该请求。"

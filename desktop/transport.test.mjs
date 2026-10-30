@@ -2,7 +2,45 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import net from 'node:net';
 import { once } from 'node:events';
-import { FrameDecoder, NativePipeTransport, encodeFrame } from './transport.mjs';
+import { FrameDecoder, StreamFrameDecoder, NativePipeTransport, encodeFrame } from './transport.mjs';
+
+test('coordination stream handles split headers and several coalesced frames', () => {
+  const frames = [{ n: 1 }, { n: 2 }, { n: 3 }];
+  const encoded = Buffer.concat(frames.map(value => encodeFrame(value)));
+  for (const width of [1, 3, 7, encoded.length]) {
+    const decoder = new StreamFrameDecoder(64), received = [];
+    for (let offset = 0; offset < encoded.length; offset += width) {
+      decoder.push(encoded.subarray(offset, offset + width), body => received.push(JSON.parse(body.toString())));
+    }
+    assert.deepEqual(received, frames);
+    assert.equal(decoder.body, null);
+  }
+});
+
+test('coordination stream accepts a bounded history frame above the old 8MiB limit', () => {
+  const value = { synthetic: 'x'.repeat(9 * 1024 * 1024) };
+  const encoded = encodeFrame(value, 16 * 1024 * 1024);
+  const decoder = new StreamFrameDecoder();
+  let received = 0;
+  for (let offset = 0; offset < encoded.length; offset += 65536) {
+    decoder.push(encoded.subarray(offset, offset + 65536), body => {
+      assert.equal(JSON.parse(body.toString()).synthetic.length, value.synthetic.length);
+      received++;
+    });
+  }
+  assert.equal(received, 1);
+  assert.equal(decoder.body, null);
+});
+
+test('coordination rejects oversize declarations before allocating a body', () => {
+  for (const size of [0, 16 * 1024 * 1024 + 1, 0xffffffff]) {
+    const decoder = new StreamFrameDecoder(), header = Buffer.alloc(4);
+    header.writeUInt32LE(size);
+    assert.throws(() => decoder.push(header, () => assert.fail('unexpected frame')), { code: 'frame_too_large' });
+    assert.equal(decoder.body, null);
+  }
+  for (const limit of [0, -1, 1.5, 16 * 1024 * 1024 + 1]) assert.throws(() => new StreamFrameDecoder(limit), RangeError);
+});
 
 async function mockServer(t, handle) {
   const sockets = new Set();

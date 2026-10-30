@@ -29,7 +29,7 @@ from companion.pairing import Pairing
 from companion.relay import RelayServer
 from companion.security import certificate, confirmation, fingerprint, generate_identity, proof_bytes, protect, sha256, unprotect, verify_phone
 from companion.wire import TLSStream, read_frame, relay_connect, send_frame
-from prototype.desktop import DesktopRecoveryService
+from prototype.desktop import DesktopRecoveryService, DesktopUnavailable
 from prototype.journal import Conflict, Denied, Journal
 from tools.prepare_companion import prepare
 
@@ -344,6 +344,56 @@ class IntegratedRelayTests(RelayFixture):
         self.assertEqual(self.rpc('catalog', {}), {'ok': False, 'error': 'denied'})
         with self.assertRaises((OSError, EOFError)):
             self.rpc('catalog', {}, authenticated=True)
+
+    def test_distinct_phone_certificates_with_same_subject_both_remain_usable(self):
+        self.assertEqual(self.enroll()['result']['state'], 'approved')
+        first_device = self.device
+        first_key = (self.directory/'phone.key').read_bytes()
+        first_pem = self.phone_pem
+        self.phone_key, self.phone_pem = leaf(android_format=True)
+        (self.directory/'phone.pem').write_text(self.phone_pem)
+        (self.directory/'phone.key').write_bytes(self.phone_key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+        self.packet = self.host.pairing.invite()['packet']
+        self.request_id = str(uuid.uuid4())
+        self.assertEqual(self.enroll()['result']['state'], 'approved')
+        second_key = (self.directory/'phone.key').read_bytes()
+        second_pem = self.phone_pem
+        self.assertTrue(self.rpc('catalog', {}, authenticated=True)['ok'])
+        (self.directory/'phone.pem').write_text(first_pem)
+        (self.directory/'phone.key').write_bytes(first_key)
+        self.assertTrue(self.rpc('catalog', {}, authenticated=True)['ok'])
+        # A third same-subject leaf is never trusted just because its name
+        # matches. Revoking one enrolled leaf must leave the other usable.
+        unknown_key, unknown_pem = leaf(android_format=True)
+        (self.directory/'phone.pem').write_text(unknown_pem)
+        (self.directory/'phone.key').write_bytes(unknown_key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+        with self.assertRaises((OSError, EOFError)):
+            self.rpc('catalog', {}, authenticated=True)
+        self.host.revoke(first_device)
+        (self.directory/'phone.pem').write_text(first_pem)
+        (self.directory/'phone.key').write_bytes(first_key)
+        with self.assertRaises((OSError, EOFError)):
+            self.rpc('catalog', {}, authenticated=True)
+        (self.directory/'phone.pem').write_text(second_pem)
+        (self.directory/'phone.key').write_bytes(second_key)
+        self.assertTrue(self.rpc('catalog', {}, authenticated=True)['ok'])
+
+    def test_unavailable_history_has_a_fixed_error_instead_of_internal_failure(self):
+        self.enroll()
+        runtime = self.host.service.runtime
+        original = runtime.history
+        try:
+            for code in ('desktop_unavailable', 'desktop_history_too_large'):
+                def unavailable(*args):
+                    raise DesktopUnavailable('synthetic non-public detail', code=code)
+                runtime.history = unavailable
+                reply = self.rpc('history', {'thread': 'codex', 'before': None, 'limit': 1}, authenticated=True)
+                self.assertEqual(reply, {'ok': False, 'error': code})
+                self.assertNotIn('本机请求处理失败', self.host.phone_status.text())
+        finally:
+            runtime.history = original
 
     def test_shutdown_rejects_a_late_outbound_socket_registration(self):
         self.host.close()

@@ -214,6 +214,29 @@ class DesktopRecovery(unittest.TestCase):
         for limit in (True, 0, 9):
             with self.assertRaises(ValueError): self.service.call('phone', 'history', {'thread': 'codex', 'before': None, 'limit': limit})
 
+    def test_oversize_worker_frame_retains_only_a_fixed_unavailable_code(self):
+        runtime = NodeDesktopRuntime(self.path, self.path.parent, timeout=2)
+        runtime.worker = ROOT / 'tests/fixtures/desktop_worker_stub.mjs'
+        with self.assertRaises(DesktopUnavailable) as result:
+            runtime.history('codex', 'synthetic-oversized-frame', None, 1)
+        self.assertEqual(result.exception.code, 'desktop_history_too_large')
+        self.assertEqual(DesktopUnavailable('synthetic', code='untrusted-code').code, 'desktop_unavailable')
+
+    def test_history_hash_detects_same_id_content_and_status_changes(self):
+        first = self.service.call('phone', 'history', {'thread': 'codex', 'before': None, 'limit': 6})
+        second = self.service.call('phone', 'history', {'thread': 'codex', 'before': None, 'limit': 6, 'ifRevision': first['revision']})
+        self.assertTrue(second['notModified'])
+        self.assertNotIn('messages', second)
+        self.runtime.history = lambda *args: {'messages': [{'id': 'synthetic-message', 'role': 'assistant',
+            'text': 'changed text', 'status': 'inProgress'}], 'nextBefore': None, 'hasMore': False,
+            'runtimeStatus': 'unknown', 'historyComplete': True}
+        changed = self.service.call('phone', 'history', {'thread': 'codex', 'before': None, 'limit': 6, 'ifRevision': first['revision']})
+        self.assertFalse(changed['notModified'])
+        self.assertNotEqual(changed['revision'], first['revision'])
+        self.service.revoke('phone')
+        with self.assertRaises(Denied):
+            self.service.call('phone', 'history', {'thread': 'codex', 'before': None, 'limit': 6, 'ifRevision': first['revision']})
+
     def test_revocation_during_history_read_suppresses_returned_content(self):
         self.runtime.prepare = lambda: self.service.revoke('phone')
         with self.assertRaises(Denied): self.service.call('phone', 'history', {'thread': 'codex', 'before': None, 'limit': 6})

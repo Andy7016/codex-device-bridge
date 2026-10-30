@@ -40,7 +40,7 @@ export function projectHistory(snapshot, { before = null, limit = 6 } = {}) {
       if (text) messages.push({ id: `${turn.turnId}:${item.id ?? index}`, role, text: boundedText(text), status: turn.status ?? '' });
     }
   }
-  const generation = createHash('sha256').update(JSON.stringify([state.id, messages.map(m => m.id)])).digest('hex').slice(0, 24);
+  const generation = createHash('sha256').update(JSON.stringify([state.id, messages])).digest('hex').slice(0, 24);
   let end = messages.length;
   if (before !== null) {
     const match = /^h1\.([a-f0-9]{24})\.(\d+)$/.exec(before);

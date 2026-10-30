@@ -7,31 +7,64 @@ import io.github.vvcchh0.devicebridge.data.ConnectionProfile
 import io.github.vvcchh0.devicebridge.data.OperationStore
 import io.github.vvcchh0.devicebridge.data.PairingRepository
 import io.github.vvcchh0.devicebridge.data.ProfileStore
+import io.github.vvcchh0.devicebridge.data.HistoryCache
 import org.json.JSONObject
 import java.util.UUID
 
-data class HistoryPage(val messages: List<ChatMessage>, val nextBefore: String?, val runtimeStatus: String)
+data class HistoryPage(val messages: List<ChatMessage>, val nextBefore: String?, val runtimeStatus: String, val cached: Boolean = false)
 
 class BridgeRepository(context: Context, private val transport: BridgeTransport = BridgeTransport()) {
     val profiles = ProfileStore(context)
     val outbox = OperationStore(context)
     val pairing = PairingRepository(context, transport)
+    private val historyCache = HistoryCache(context)
+    private val bindings = java.util.concurrent.ConcurrentHashMap<String, String>()
     init { transport.relayTicketSink = { id, ticket -> profiles.refreshRelayTicket(id, ticket) } }
     fun cancelTransport() = transport.cancelActive()
 
     fun catalog(profile: ConnectionProfile): List<SessionInfo> {
-        val list = transport.request(profile, "catalog", JSONObject()).getJSONArray("sessions")
-        return (0 until list.length()).map { index ->
+        val list = try { transport.request(profile, "catalog", JSONObject()).getJSONArray("sessions") }
+        catch (e: BridgeFailure) { if (e.code == "denied") clearHistory(profile); throw e }
+        val sessions = (0 until list.length()).map { index ->
             val item = list.getJSONObject(index)
             val allowed = item.optJSONArray("allowedMessages")
             SessionInfo(item.getString("label"), item.getString("title"), item.getString("kind"), item.optBoolean("canSend"),
-                allowed?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(), item.optBoolean("freeText", false))
+                allowed?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(), item.optBoolean("freeText", false), item.optString("sessionKey"))
         }.filter { it.kind == "codex" }
+        if (sessions.any { old -> bindings[profile.id+":"+old.label]?.let { it != old.sessionKey } == true }) clearHistory(profile)
+        sessions.forEach { bindings[profile.id+":"+it.label] = it.sessionKey }
+        return sessions
     }
 
     fun history(profile: ConnectionProfile, label: String, before: String? = null): HistoryPage {
-        val result = transport.request(profile, "history", JSONObject().put("thread", label)
-            .put("before", before ?: JSONObject.NULL).put("limit", 6))
+        val session = bindings[profile.id+":"+label].orEmpty()
+        val cached = if (session.isNotEmpty()) historyCache.load(profile.id, session, before) else null
+        val params = JSONObject().put("thread", label).put("before", before ?: JSONObject.NULL).put("limit", 6)
+        cached?.optString("revision")?.takeIf { it.matches(Regex("[0-9a-f]{64}")) }?.let { params.put("ifRevision", it) }
+        val result = try { transport.request(profile, "history", params) }
+        catch (e: BridgeFailure) { if (e.code in setOf("denied", "history_changed")) clearHistory(profile); throw e }
+        if (session.isNotEmpty() && result.optString("sessionKey") != session) {
+            clearHistory(profile); throw BridgeFailure("history_changed", false)
+        }
+        if (result.optBoolean("notModified")) {
+            if (cached == null) throw BridgeFailure("invalid_response", false)
+            result.put("messages", cached.getJSONArray("messages"))
+        }
+        if (session.isNotEmpty()) historyCache.save(profile.id, session, before, result)
+        return parseHistory(result)
+    }
+
+    fun cachedHistory(profile: ConnectionProfile, label: String): HistoryPage? {
+        val session = bindings[profile.id+":"+label]?.takeIf { it.isNotEmpty() } ?: return null
+        return historyCache.load(profile.id, session, null)?.let {
+            try { parseHistory(it).copy(runtimeStatus = "unknown", cached = true) } catch (_: Exception) { null }
+        }
+    }
+
+    fun clearHistory(profile: ConnectionProfile) { try { historyCache.clear(profile.id) } catch (_: Exception) { } }
+    fun forgetHistory(profile: ConnectionProfile) { historyCache.clear(profile.id) }
+
+    private fun parseHistory(result: JSONObject): HistoryPage {
         val list = result.getJSONArray("messages")
         val messages = (0 until list.length()).map { i ->
             val item = list.getJSONObject(i)

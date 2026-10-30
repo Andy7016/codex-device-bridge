@@ -3,7 +3,7 @@
 import net from 'node:net';
 import { createHash, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
-import { encodeFrame, TransportFailure } from './transport.mjs';
+import { encodeFrame, StreamFrameDecoder, TransportFailure } from './transport.mjs';
 import { CapabilityError } from './adapter.mjs';
 
 const VERSIONS = Object.freeze({ initialize: 0, 'thread-owner-discovery': 1,
@@ -43,7 +43,7 @@ export class CoordinationClient {
     this.tickets = new Map();
     this.decisionsInFlight = new Set();
     this.attemptedDecisions = new Set();
-    this.buffer = Buffer.alloc(0);
+    this.decoder = new StreamFrameDecoder();
     this.closed = false;
     this.socket.on('data', chunk => this.#data(chunk));
     this.socket.on('error', () => this.close('connection_error'));
@@ -87,42 +87,40 @@ export class CoordinationClient {
     });
   }
   #data(chunk) {
+    if (this.closed) return;
     try {
-      if (this.buffer.length + chunk.length > 8 * 1024 * 1024 + 4) throw new Error('frame_limit');
-      this.buffer = Buffer.concat([this.buffer, chunk]);
-      while (this.buffer.length >= 4) {
-        const size = this.buffer.readUInt32LE();
-        if (!size || size > 8 * 1024 * 1024) throw new Error('frame_limit');
-        if (this.buffer.length < size+4) break;
-        const msg = JSON.parse(this.buffer.subarray(4, size+4).toString('utf8'));
-        this.buffer = this.buffer.subarray(size+4);
-        if (msg.type === 'client-discovery-request') {
-          // Refuse all ownership/handler discovery: this is an observing client.
-          this.socket.write(encodeFrame({ type: 'client-discovery-response', requestId: msg.requestId, response: { canHandle: false } }));
-        } else if (msg.type === 'response') {
-          const entry = this.pending.get(msg.requestId);
-          if (!entry) continue;
-          this.pending.delete(msg.requestId); clearTimeout(entry.timer);
-          if (msg.resultType !== 'success') entry.reject(new TransportFailure(
-            entry.method === 'thread-owner-discovery' && msg.error === 'no-client-found' ? 'owner_not_found' : 'owner_request_rejected', true));
-          else if (msg.method !== entry.method || entry.owner && msg.handledByClientId !== entry.owner) entry.reject(new TransportFailure('owner_identity_mismatch', true));
-          else entry.resolve(msg);
-        } else if (msg.type === 'broadcast' && msg.method === 'thread-stream-state-changed') {
-          // Never retain unrelated conversation broadcasts or accept a snapshot
-          // supplied by a client other than the discovered owner.
-          for (const [label, owner] of this.owners) {
-            const target = this.policy.targets[label];
-            if (msg.sourceClientId !== owner || msg.version !== 11 ||
-                msg.params?.hostId !== 'local' || msg.params?.conversationId !== target.threadId) continue;
-            const change = msg.params.change;
-            if (change?.type === 'snapshot' && Number.isSafeInteger(change.revision) &&
-                change.conversationState?.id === target.threadId) {
-              this.snapshots.set(label, structuredClone(change));
-            } else this.snapshots.delete(label); // patches invalidate approval evidence
-          }
-        }
+      this.decoder.push(chunk, body => this.#message(JSON.parse(body.toString('utf8'))));
+    } catch (error) {
+      this.close(error?.code === 'frame_too_large' ? 'coordination_frame_too_large' :
+        error instanceof SyntaxError ? 'coordination_invalid_json' : 'invalid_coordination_frame');
+    }
+  }
+  #message(msg) {
+    if (msg.type === 'client-discovery-request') {
+      // Refuse all ownership/handler discovery: this is an observing client.
+      this.socket.write(encodeFrame({ type: 'client-discovery-response', requestId: msg.requestId, response: { canHandle: false } }));
+    } else if (msg.type === 'response') {
+      const entry = this.pending.get(msg.requestId);
+      if (!entry) return;
+      this.pending.delete(msg.requestId); clearTimeout(entry.timer);
+      if (msg.resultType !== 'success') entry.reject(new TransportFailure(
+        entry.method === 'thread-owner-discovery' && msg.error === 'no-client-found' ? 'owner_not_found' : 'owner_request_rejected', true));
+      else if (msg.method !== entry.method || entry.owner && msg.handledByClientId !== entry.owner) entry.reject(new TransportFailure('owner_identity_mismatch', true));
+      else entry.resolve(msg);
+    } else if (msg.type === 'broadcast' && msg.method === 'thread-stream-state-changed') {
+      // Never retain unrelated conversation broadcasts or accept a snapshot
+      // supplied by a client other than the discovered owner.
+      for (const [label, owner] of this.owners) {
+        const target = this.policy.targets[label];
+        if (msg.sourceClientId !== owner || msg.version !== 11 ||
+            msg.params?.hostId !== 'local' || msg.params?.conversationId !== target.threadId) continue;
+        const change = msg.params.change;
+        if (change?.type === 'snapshot' && Number.isSafeInteger(change.revision) &&
+            change.conversationState?.id === target.threadId) {
+          this.snapshots.set(label, structuredClone(change));
+        } else this.snapshots.delete(label); // patches invalidate approval evidence
       }
-    } catch { this.close('invalid_coordination_frame'); }
+    }
   }
   async discoverOwner(label) {
     const target = this.#target(label, 'read');
@@ -269,6 +267,7 @@ export class CoordinationClient {
     this.closed = true;
     for (const entry of this.pending.values()) { clearTimeout(entry.timer); entry.reject(new TransportFailure(reason, true)); }
     this.pending.clear(); this.snapshots.clear(); this.tickets.clear();
+    this.decoder.reset();
     this.decisionsInFlight.clear(); this.attemptedDecisions.clear();
     this.socket.destroy(); // router removes follower subscriptions on disconnect
   }

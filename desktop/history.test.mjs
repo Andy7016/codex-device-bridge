@@ -29,6 +29,14 @@ test('UTF-8 long messages are visibly bounded and stay inside transport frame', 
   assert.ok(Buffer.byteLength(JSON.stringify({ ok: true, history: page })) < 8192);
   assert.ok(page.messages.some(m => m.text.includes('内容已截断')));
 });
+test('same-ID content and status edits invalidate the history cursor', () => {
+  for (const mutate of [state => { state.items[0].content[0].text = 'edited'; }, state => { state.status = 'inProgress'; }]) {
+    const s = snapshot();
+    const cursor = projectHistory(s, { limit: 1 }).nextBefore;
+    mutate(s.conversationState.turnHistory.history.entitiesByKey[0]);
+    assert.throws(() => projectHistory(s, { before: cursor }), { code: 'history_changed' });
+  }
+});
 test('invalid pages and unsupported history fail without fabricated transcript', () => {
   for (const limit of [0, 9, true]) assert.throws(() => projectHistory(snapshot(), { limit }), { code: 'invalid_history_page' });
   assert.throws(() => projectHistory({}), { code: 'unsupported_history_shape' });

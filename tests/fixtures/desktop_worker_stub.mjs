@@ -8,6 +8,10 @@ if (request.action === 'send') {
   console.log(JSON.stringify({ ready: true, targetId: request.targetId, messageId: request.messageId, executionId: request.executionId }));
   if ((await iterator.next()).value !== '{"commit":true}') throw new Error('no handoff permit');
 }
-console.log(JSON.stringify({ ok: true, observation: { observed: true, targetId: request.targetId,
-  messageId: request.messageId, turnId: 'synthetic-turn', turnStatus: 'completed' } }));
+if (request.targetId === 'synthetic-oversized-frame') {
+  console.log(JSON.stringify({ ok: false, error: 'coordination_frame_too_large' }));
+} else {
+  console.log(JSON.stringify({ ok: true, observation: { observed: true, targetId: request.targetId,
+    messageId: request.messageId, turnId: 'synthetic-turn', turnStatus: 'completed' } }));
+}
 lines.close(); process.stdin.destroy();

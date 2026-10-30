@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import threading
+import hashlib
 
 from .journal import Conflict, Denied, canonical
 from .child_job import KillOnCloseJob
@@ -16,6 +17,10 @@ from .child_job import KillOnCloseJob
 
 class DesktopUnavailable(Exception):
     """No positive delivery evidence. Never authorizes a resend."""
+
+    def __init__(self, message, *, code='desktop_unavailable'):
+        super().__init__(message)
+        self.code = code if code == 'desktop_history_too_large' else 'desktop_unavailable'
 
 
 class NodeDesktopRuntime:
@@ -41,7 +46,8 @@ class NodeDesktopRuntime:
         environment = {k: v for k, v in os.environ.items() if k.lower() in allowed_env}
         process = subprocess.Popen([self.node, str(self.worker), str(self.policy_path), str(self.attempts_path)],
                                    cwd=self.worker.parent.parent, env=environment,
-                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         timer = threading.Timer(self.timeout, process.kill)
         timer.start()
         job = None
@@ -96,7 +102,8 @@ class NodeDesktopRuntime:
             if reply.get("ok") is True and action == "history" and isinstance(reply.get("history"), dict):
                 return reply["history"]
             if reply.get("ok") is not True or not isinstance(reply.get("observation"), dict):
-                raise DesktopUnavailable("desktop evidence unavailable")
+                code = 'desktop_history_too_large' if reply.get('error') == 'coordination_frame_too_large' else 'desktop_unavailable'
+                raise DesktopUnavailable("desktop evidence unavailable", code=code)
             observation = reply["observation"]
             if observation.get("observed") is True:
                 if observation.get("targetId") != binding["target"] or observation.get("messageId") != binding["message_id"]:
@@ -227,7 +234,8 @@ class DesktopRecoveryService:
     def call(self, device, method, params):
         if method not in self.METHODS:
             raise Denied("unsupported method")
-        if not isinstance(params, dict) or set(params) != self.METHODS[method]:
+        expected = self.METHODS[method]
+        if not isinstance(params, dict) or set(params) not in (expected, expected | ({'ifRevision'} if method == 'history' else set())):
             raise ValueError("unexpected request fields")
         self.journal.authorize_device(device)
         if method == "catalog":
@@ -245,6 +253,7 @@ class DesktopRecoveryService:
                 except Denied:
                     can_send = False
                 sessions.append({"label": label, "title": str(target.get("displayName", "Codex 会话"))[:80],
+                                 "sessionKey": hashlib.sha256(('codex:local:'+target['threadId']).encode()).hexdigest(),
                                  "kind": "codex", "canSend": can_send,
                                  "allowedMessages": target.get("allowedMessages", [])[:8] if can_send else [],
                                  "freeText": can_send and target.get("allowFreeText") is True})
@@ -257,10 +266,20 @@ class DesktopRecoveryService:
                 raise ValueError("invalid history page")
             if "read" not in target.get("rights", []):
                 raise Denied("host read permission missing")
+            condition = params.get('ifRevision')
+            if condition is not None and (not isinstance(condition, str) or len(condition) != 64 or any(c not in '0123456789abcdef' for c in condition)):
+                raise ValueError('invalid_history_revision')
             result = self.runtime.history(params["thread"], target["threadId"], params["before"], params["limit"])
             with self.response_guard(device):
                 self.journal.authorize(device, params["thread"], "read")
-                return result
+                session_key = hashlib.sha256(('codex:local:'+target['threadId']).encode()).hexdigest()
+                revision = hashlib.sha256(canonical({'sessionKey': session_key, 'before': params['before'],
+                    'limit': params['limit'], 'page': result}).encode()).hexdigest()
+                page = {**result, 'sessionKey': session_key, 'revision': revision, 'notModified': False}
+                if condition == revision:
+                    page.pop('messages', None)
+                    page['notModified'] = True
+                return page
         if method == "submit":
             self.enqueue(device, params["thread"], params["id"], params["payload"])
             return self.dispatch(device, params["id"])

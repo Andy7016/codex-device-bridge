@@ -10,7 +10,8 @@ import secrets
 import time
 
 from cryptography.exceptions import InvalidSignature
-from prototype.desktop import DesktopRecoveryService, NodeDesktopRuntime
+from prototype.desktop import DesktopRecoveryService, DesktopUnavailable
+from prototype.stored_history import BridgeDesktopRuntime, HistoryChanged
 from prototype.journal import Conflict, Denied, Journal
 from .pairing import Pairing
 from .configuration import load_configuration
@@ -20,7 +21,7 @@ from .wire import TLSStream, read_frame, relay_connect, send_frame
 
 
 class Host:
-    def __init__(self, config_path, *, runtime_factory=NodeDesktopRuntime):
+    def __init__(self, config_path, *, runtime_factory=BridgeDesktopRuntime):
         self.config_path = Path(config_path).resolve()
         self.directory = self.config_path.parent
         self.config, policy_path = load_configuration(self.config_path)
@@ -162,6 +163,12 @@ class Host:
         except Conflict:
             self.phone_status.record('conflict')
             self._error(stream, 'conflict')
+        except HistoryChanged:
+            self.phone_status.record('history_changed')
+            self._error(stream, 'history_changed')
+        except DesktopUnavailable as error:
+            self.phone_status.record('history_large' if error.code == 'desktop_history_too_large' else 'desktop_unavailable')
+            self._error(stream, error.code)
         except (ValueError, TypeError, KeyError, RecursionError):
             self.phone_status.record('invalid')
             self._error(stream, 'invalid_request')
@@ -261,8 +268,16 @@ class Host:
                 except OSError:
                     pass
                 stream.close()
-        for thread in self.threads:
-            thread.join(36)
-        if any(thread.is_alive() for thread in self.threads):
-            raise RuntimeError('host_worker_did_not_stop')
+        cancel_runtime = getattr(self.service.runtime, 'cancel', None)
+        if cancel_runtime:
+            cancel_runtime()
+        try:
+            for thread in self.threads:
+                thread.join(36)
+            if any(thread.is_alive() for thread in self.threads):
+                raise RuntimeError('host_worker_did_not_stop')
+        finally:
+            close_runtime = getattr(self.service.runtime, 'close', None)
+            if close_runtime:
+                close_runtime()
         self.journal.close()

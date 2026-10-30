@@ -128,6 +128,9 @@ fun BridgeApp(state: UiState, actions: UiActions) {
             if (state.demo || state.connection == ConnectionStatus.DEMO) {
                 DemoBanner()
             }
+            if (state.historyCached) {
+                NoticeBanner(text = "显示上次读取的内容，尚未与电脑核对。", isError = false)
+            }
 
             when (page) {
                 BridgePage.CHAT -> ChatPage(

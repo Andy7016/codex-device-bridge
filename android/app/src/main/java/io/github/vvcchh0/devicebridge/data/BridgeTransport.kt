@@ -110,10 +110,12 @@ class BridgeTransport internal constructor(private val exchange: RouteExchange) 
             "sync" -> setOf("thread", "cursor")
             else -> throw BridgeFailure("method_not_allowed", deliveryUnknown = false)
         }
-        if (params.keys().asSequence().toSet() != fields) throw BridgeFailure("invalid_params", deliveryUnknown = false)
+        val supplied = params.keys().asSequence().toSet()
+        if (supplied != fields && !(method == "history" && supplied == fields + "ifRevision")) throw BridgeFailure("invalid_params", deliveryUnknown = false)
         when (method) {
             "catalog" -> Unit
             "history" -> {
+                if (params.has("ifRevision") && !Regex("[0-9a-f]{64}").matches(params.optString("ifRevision"))) throw BridgeFailure("invalid_params", false)
                 requireString(params, "thread", 1, MAX_ALIAS_CHARS)
                 val before = params.opt("before")
                 if (before !== JSONObject.NULL && (before !is String || before.length !in 1..MAX_CURSOR_CHARS)) {

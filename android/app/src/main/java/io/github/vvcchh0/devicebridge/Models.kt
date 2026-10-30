@@ -9,6 +9,7 @@ data class SessionInfo(
     val canSend: Boolean = false,
     val allowedMessages: List<String> = emptyList(),
     val freeText: Boolean = false,
+    val sessionKey: String = "",
 )
 
 data class ChatMessage(val id: String, val role: String, val text: String, val status: String = "")
@@ -37,6 +38,7 @@ data class UiState(
     val notice: String? = null,
     val lastSync: String? = null,
     val hasMoreHistory: Boolean = false,
+    val historyCached: Boolean = false,
     val demo: Boolean = false,
     val pairingInput: String = "",
     val pairingPhase: PairingPhase? = null,
