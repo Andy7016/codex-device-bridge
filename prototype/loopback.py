@@ -32,8 +32,8 @@ def reject_constant(_):
     raise ValueError("non-finite JSON number")
 
 
-def parse_frame(frame):
-    if len(frame) > MAX_FRAME or not frame.endswith(b"\n"):
+def parse_frame(frame, *, limit=MAX_FRAME):
+    if type(limit) is not int or not 1 <= limit <= 65536 or len(frame) > limit or not frame.endswith(b"\n"):
         raise ValueError("invalid frame length")
     obj = json.loads(frame, object_pairs_hook=unique_pairs, parse_constant=reject_constant)
     if not isinstance(obj, dict):

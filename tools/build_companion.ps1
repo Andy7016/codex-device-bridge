@@ -1,4 +1,4 @@
-param([string]$Version = '0.3.1', [string]$Python = '')
+param([string]$Version = '0.3.3', [string]$Python = '')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid companion version' }
 $taskRoot = Split-Path -Parent $PSScriptRoot

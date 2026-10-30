@@ -283,7 +283,7 @@ private class SecureRouteExchange : RouteExchange {
             output.write(frame)
             output.write(NEWLINE)
             output.flush()
-            val responseLine = readLine(inner, MAX_FRAME_BYTES, method = method)
+            val responseLine = readLine(inner, MAX_RESPONSE_BYTES, method = method)
             return try {
                 val result = parseResponse(responseLine, method)
                 val envelope = JSONObject(decodeUtf8(responseLine))
@@ -579,7 +579,7 @@ private class SecureRouteExchange : RouteExchange {
     private companion object {
         const val NEWLINE = 10
         const val CARRIAGE_RETURN = 13
-        const val MAX_FRAME_BYTES = 8192
+        const val MAX_RESPONSE_BYTES = 65536
         const val MAX_RELAY_PREFACE_BYTES = 2048
         const val DIRECT_CONNECT_TIMEOUT_MS = 2500
         const val RELAY_CONNECT_TIMEOUT_MS = 8000

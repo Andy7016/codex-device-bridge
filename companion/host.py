@@ -143,7 +143,7 @@ class Host:
                 envelope = {'ok': True, 'result': result}
                 if self.identity.get('relay', {}).get('transport') == 'wss':
                     envelope['relayTicket'] = self.issue_ticket('phone:' + device[6:])
-                send_frame(stream, envelope)
+                send_frame(stream, envelope, limit=65536)
         except ssl.SSLError as error:
             self.last_tls_failure = str(getattr(error, 'reason', 'TLS_FAILURE'))[:80]
             return

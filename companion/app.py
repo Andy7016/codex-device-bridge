@@ -53,11 +53,22 @@ class Window:
         self.pending = tk.Listbox(right, height=3, exportselection=False)
         self.pending.pack(fill='x', pady=8)
         ttk.Label(right, text='授权会话（“发送”可触发原会话行为）').pack(anchor='w')
+        scope = ttk.Frame(right)
+        scope.pack(fill='x', pady=4)
+        self.grants_canvas = tk.Canvas(scope, height=170, highlightthickness=0)
+        scroll = ttk.Scrollbar(scope, orient='vertical', command=self.grants_canvas.yview)
+        self.grants_canvas.configure(yscrollcommand=scroll.set)
+        scroll.pack(side='right', fill='y')
+        self.grants_canvas.pack(side='left', fill='x', expand=True)
+        grant_rows = ttk.Frame(self.grants_canvas)
+        rows_window = self.grants_canvas.create_window((0, 0), window=grant_rows, anchor='nw')
+        grant_rows.bind('<Configure>', lambda event: self.grants_canvas.configure(scrollregion=self.grants_canvas.bbox('all')))
+        self.grants_canvas.bind('<Configure>', lambda event: self.grants_canvas.itemconfigure(rows_window, width=event.width))
         self.grants = {}
         for label, target in host.service.policy.get('targets', {}).items():
             if target.get('kind') != 'codex' or 'read' not in target.get('rights', []):
                 continue
-            row = ttk.Frame(right)
+            row = ttk.Frame(grant_rows)
             row.pack(fill='x', pady=3)
             read, send = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
             ttk.Checkbutton(row, text=str(target.get('displayName', label))[:30], variable=read).pack(side='left')
@@ -65,6 +76,8 @@ class Window:
             self.grants[label] = (read, send)
         if not self.grants:
             ttk.Label(right, text='尚未导入会话策略，当前不授权访问任何会话。\n可在“连接与会话范围设置”中导入已有策略。', wraplength=430).pack(anchor='w', pady=8)
+        else:
+            ttk.Label(right, text=f'已配置{len(self.grants)}条会话，默认全部勾选读取；发送需单独勾选。').pack(anchor='w')
         ttk.Button(right, text='数字一致，确认配对', command=self.approve).pack(fill='x', pady=(12, 4))
         ttk.Button(right, text='拒绝所选请求', command=self.deny).pack(fill='x')
         ttk.Label(body, text='已配对设备', font=('Microsoft YaHei UI', 12, 'bold')).pack(anchor='w', pady=(12, 4))
@@ -156,7 +169,8 @@ class Window:
         row = self.pending_rows[selection[0]]
         grants = {label: ['read']+(['send'] if send.get() else []) for label, (read, send) in self.grants.items() if read.get()}
         if not grants:
-            messagebox.showinfo('请选择范围', '至少选择一条允许读取的会话。')
+            messagebox.showinfo('请选择范围', '至少选择一条允许读取的会话。' if self.grants else
+                                '当前策略中没有允许读取的会话。请先在“连接与会话范围设置”中导入会话策略。')
             return
         if not messagebox.askyesno('确认配对', f"手机：{row['phone_name']}\n核对码：{row['code']}\n请确认手机显示相同数字。"):
             return

@@ -1,3 +1,7 @@
+# Android v0.3.3 批量只读清单
+
+支持Companion发送的64KiB有界响应，以浏览最多100条已授权会话；请求仍限制8KiB。不会因清单变大授予发送/审批权限，原HTTP CONNECT、证书固定、unknown核对和不重发行为保持。
+
 # Android v0.3.2 HTTP CONNECT
 
 系统ProxySelector指定HTTP代理时，APP通过该代理建立到固定中继的CONNECT隧道，再校验中继TLS证书与主机名，之后才发送WSS路由鉴权。CONNECT只包含目标authority和Host，不包含中继票据、手机证书、Cookie或代理凭据。中继域名交由代理解析；本机仍需要能到达并解析代理本身。

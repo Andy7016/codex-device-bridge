@@ -28,7 +28,7 @@ def read_frame(stream, limit=8192, *, timeout=8):
             raise EOFError('reply_unavailable')
         result.extend(byte)
         if byte == b'\n':
-            return parse_frame(bytes(result))
+            return parse_frame(bytes(result), limit=limit)
     raise ValueError('frame_too_large')
 
 

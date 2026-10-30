@@ -1,5 +1,6 @@
 """Dedicated synthetic Android WSS fixture. Loopback only, hard 15-minute lifetime."""
 import json
+import os
 from pathlib import Path
 import queue
 import sys
@@ -17,6 +18,13 @@ from companion.security import certificate, fingerprint
 def main():
     lab = WssRelayTests('test_bad_ticket_cannot_reach_inner_tls_or_runtime')
     lab.setUp()
+    bulk = os.environ.get('WSS_LAB_BULK_READ') == '1'
+    if bulk:
+        targets = lab.host.service.policy['targets']
+        targets['codex']['rights'] = ['read']
+        for index in range(1, 100):
+            targets['readonly-'+str(index)] = {'kind':'codex','hostId':'local','threadId':'synthetic-'+str(index),
+                'displayName':'合成只读会话'+str(index)+'示例'*35,'rights':['read']}
     operation = str(uuid.uuid4())
     dropped = threading.Event()
     stopped = threading.Event()
@@ -40,14 +48,15 @@ def main():
         while not stopped.wait(.1):
             for pending in lab.host.pairing.pending():
                 try:
-                    lab.host.approve(pending['id'], pending['code'], {'codex': ['read', 'send']})
+                    grants = {label:['read'] for label in lab.host.service.policy['targets']} if bulk else {'codex':['read','send']}
+                    lab.host.approve(pending['id'], pending['code'], grants)
                 except Exception:
                     pass
     worker = threading.Thread(target=approve, daemon=True); worker.start()
     def publish():
         invitation = lab.host.pairing.invite()
         fixture = {'qrText': invitation['text'], 'operationId': operation, 'message': 'synthetic text',
-                   'hostId': lab.host.identity['hostId'], 'port': lab.port}
+                   'hostId': lab.host.identity['hostId'], 'port': lab.port, 'bulkReadCount':100 if bulk else 0}
         (lab.directory / 'wss-lab.json').write_text(json.dumps(fixture), encoding='utf8')
         print(json.dumps({'ready': True, 'asset': str(lab.directory / 'wss-lab.json'), 'port': lab.port,
                           'syntheticOnly': True}), flush=True)

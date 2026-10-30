@@ -133,6 +133,15 @@ class StartupTests(unittest.TestCase):
         update_configuration(path, relay_host='relay.example', use_system_trust=True)
         self.assertIsNone(read_json(path)['identity']['relay']['certificatePem'])
 
+    def test_larger_response_does_not_relax_default_request_or_json_validation(self):
+        from prototype.loopback import parse_frame
+        frame = (json.dumps({'text':'x'*9000})+'\n').encode()
+        with self.assertRaises(ValueError): parse_frame(frame)
+        self.assertEqual(parse_frame(frame, limit=65536)['text'], 'x'*9000)
+        with self.assertRaises(ValueError): parse_frame(frame, limit=65537)
+        duplicate = ('{"text":"'+('x'*9000)+'","text":"duplicate"}\n').encode()
+        with self.assertRaises(ValueError): parse_frame(duplicate, limit=65536)
+
 
 class WizardGuiTests(unittest.TestCase):
     def setUp(self):
@@ -172,6 +181,26 @@ class WizardGuiTests(unittest.TestCase):
             wizard.import_existing()
         self.assertEqual(wizard.selected, path)
         self.assertEqual(path.read_bytes(), original)
+
+    def test_many_sessions_default_to_read_only_and_remain_scrollable(self):
+        from companion.app import Window
+        source = self.directory/'many-policy.json'
+        source.write_text(json.dumps({'targets':{str(index):{'kind':'codex','hostId':'local',
+            'threadId':'synthetic-'+str(index),'displayName':'Synthetic '+str(index),'rights':['read']}
+            for index in range(100)}}))
+        prepare(self.directory/'many', policy=source)
+        host = Host(self.directory/'many/host.json')
+        try:
+            window = Window(self.root, host)
+            self.root.update_idletasks()
+            self.assertEqual(len(window.grants), 100)
+            self.assertTrue(all(read.get() and not send.get() for read,send in window.grants.values()))
+            self.assertLess(window.grants_canvas.yview()[1], 1)
+            window.grants_canvas.yview_moveto(1)
+            self.assertGreater(window.grants_canvas.yview()[0], 0)
+            window.closing = True
+        finally:
+            host.close()
 
 
 if __name__ == '__main__':

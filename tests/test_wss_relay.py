@@ -106,7 +106,7 @@ class WssRelayTests(unittest.TestCase):
         finally:
             self.stop_relay()
 
-    def rpc(self, endpoint, method, params, authenticated=False):
+    def rpc(self, endpoint, method, params, authenticated=False, response_limit=8192):
         outer = relay_connect(endpoint, {'role': 'client', 'hostId': self.host.identity['hostId']}, timeout=8)
         try:
             context = ssl.create_default_context(cadata=self.host.identity['serverCertificatePem'])
@@ -118,11 +118,11 @@ class WssRelayTests(unittest.TestCase):
                 context.load_cert_chain(self.directory / 'phone.pem', self.directory / 'phone.key', password=password)
             inner = TLSStream(outer, context, server_hostname=self.host.identity['serverName'])
             send_frame(inner, {'method': method, 'params': params})
-            return read_frame(inner)
+            return read_frame(inner, limit=response_limit)
         finally:
             outer.close()
 
-    def pair(self):
+    def pair(self, grants=None):
         packet = self.host.pairing.invite()['packet']
         self.assertEqual(packet['schemaVersion'], 2)
         params = {k: packet[k] for k in ('inviteId', 'inviteSecret')}
@@ -132,7 +132,7 @@ class WssRelayTests(unittest.TestCase):
         proof['signature'] = sign(self.key, proof_bytes(packet['inviteId'], params['requestId'], packet['hostId'],
             begin['challenge'], fingerprint(certificate(self.pem))))
         self.rpc(packet['relay'], 'pair.prove', proof)
-        self.device = self.host.approve(packet['inviteId'], begin['confirmationCode'], {'codex': ['read', 'send']})
+        self.device = self.host.approve(packet['inviteId'], begin['confirmationCode'], grants or {'codex': ['read', 'send']})
         approved = self.rpc(packet['relay'], 'pair.status', proof)['result']
         self.endpoint = {**packet['relay'], 'ticket': approved['relayTicket']}
         return packet
@@ -197,6 +197,21 @@ class WssRelayTests(unittest.TestCase):
             self.rpc(self.endpoint, 'catalog', {}, True)
         self.assertEqual(self.runtime.sends, [])
 
+
+    def test_one_hundred_read_only_sessions_fit_the_bounded_response_and_cannot_send(self):
+        targets = self.host.service.policy['targets']
+        targets['codex']['rights'] = ['read']
+        for index in range(1, 100):
+            targets['readonly-'+str(index)] = {'kind':'codex','hostId':'local','threadId':'synthetic-'+str(index),
+                'displayName':'合成只读会话'+str(index)+'示例'*35,'rights':['read']}
+        self.pair({label:['read'] for label in targets})
+        response = self.rpc(self.endpoint, 'catalog', {}, True, response_limit=65536)
+        self.assertGreater(len(json.dumps(response, ensure_ascii=False).encode()), 8192)
+        self.assertEqual(len(response['result']['sessions']), 100)
+        self.assertTrue(all(not item['canSend'] for item in response['result']['sessions']))
+        denied = self.rpc(self.endpoint, 'submit', {'thread':'codex','id':str(uuid.uuid4()),'payload':{'text':'synthetic text'}}, True)
+        self.assertEqual(denied.get('error'), 'denied')
+        self.assertEqual(self.runtime.sends, [])
 
     def test_idle_host_slots_rotate_then_still_accept_pairing_without_false_recovery(self):
         deadline = time.monotonic() + 8
