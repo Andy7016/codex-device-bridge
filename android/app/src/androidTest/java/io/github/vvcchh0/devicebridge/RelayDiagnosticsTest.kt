@@ -18,7 +18,7 @@ import javax.net.ssl.SSLHandshakeException
 
 @RunWith(AndroidJUnit4::class)
 class RelayDiagnosticsTest {
-    @Test fun explicitHttpProxyFailsBeforeNetworkWithAnActionableCode() {
+    @Test fun unavailableHttpProxyHasAnActionableCode() {
         val original = ProxySelector.getDefault()
         try {
             ProxySelector.setDefault(object : ProxySelector() {
@@ -30,7 +30,7 @@ class RelayDiagnosticsTest {
                 WebSocketCarrier(endpoint, "0".repeat(64), SSLContext.getDefault()) { }
                 fail("explicit proxy unexpectedly accepted")
             } catch (failure: RelayConnectionFailure) {
-                assertEquals("relay_http_proxy_unsupported", failure.code)
+                assertEquals("relay_proxy_unavailable", failure.code)
             }
         } finally { ProxySelector.setDefault(original) }
     }

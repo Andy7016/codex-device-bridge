@@ -25,6 +25,7 @@ internal class WebSocketCarrier(relay: RelayEndpoint, hostId: String, context: S
     private val lock = Object()
     private val sendGate = Object()
     private val closeScheduled = java.util.concurrent.atomic.AtomicBoolean()
+    private val openingSockets = LinkedHashSet<Socket>()
     private val queue = ArrayDeque<ByteArray>()
     private var headOffset = 0
     private var queued = 0
@@ -93,7 +94,9 @@ internal class WebSocketCarrier(relay: RelayEndpoint, hostId: String, context: S
         try {
             track(this)
             val selected = ProxySelector.getDefault()?.select(URI(targetUri.toString().replaceFirst("wss:", "https:")))?.firstOrNull()
-            if (selected != null && selected.type() == Proxy.Type.HTTP) throw IOException("http_proxy_not_supported")
+            if (selected != null && selected.type() == Proxy.Type.HTTP) {
+                client.setSocketFactory(HttpConnectSocketFactory(selected, relay.host, relay.port, context, ::trackOpening))
+            }
             if (selected != null && selected.type() == Proxy.Type.SOCKS) client.setProxy(selected)
             // Use the application's default network. Never bind beneath a user VPN.
             if (ended) throw IOException("carrier_closed")
@@ -129,6 +132,7 @@ internal class WebSocketCarrier(relay: RelayEndpoint, hostId: String, context: S
     }
 
     private fun abort(error: IOException? = null) {
+        val pending: List<Socket>
         synchronized(sendGate) {
         synchronized(lock) {
             if (error != null) failure = error
@@ -136,10 +140,19 @@ internal class WebSocketCarrier(relay: RelayEndpoint, hostId: String, context: S
             queue.forEach { it.fill(0) }; queue.clear(); queued = 0; headOffset = 0
             opened.countDown(); lock.notifyAll()
         }
+        pending = openingSockets.toList(); openingSockets.clear()
         }
         // Library close can synchronously invoke callbacks. No application locks held here.
+        pending.forEach { try { it.close() } catch (_: Exception) { } }
         try { client.socket?.close() } catch (_: Exception) { }
         try { client.closeConnection(1006, "carrier_closed") } catch (_: Exception) { }
+    }
+
+    private fun trackOpening(socket: Socket) {
+        val rejected = synchronized(sendGate) {
+            if (ended) true else { openingSockets.add(socket); false }
+        }
+        if (rejected) { socket.close(); throw IOException("carrier_closed") }
     }
 
     override fun isConnected(): Boolean = ready && !ended

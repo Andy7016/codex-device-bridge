@@ -8,12 +8,33 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import org.junit.Before
+import org.junit.After
 import org.junit.runner.RunWith
 import java.io.File
 import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class WebSocketIntegrationTest {
+    private var proxy: OwnedConnectProxy? = null
+    private var oldProxy: java.net.ProxySelector? = null
+    @Before fun configureOwnedProxy() {
+        if (InstrumentationRegistry.getArguments().getString("httpProxy") != "true") return
+        oldProxy = java.net.ProxySelector.getDefault()
+        val forwarding = OwnedConnectProxy(targetPort = fixture().getInt("port"))
+        proxy = forwarding
+        java.net.ProxySelector.setDefault(object : java.net.ProxySelector() {
+            override fun select(uri: java.net.URI) = mutableListOf(java.net.Proxy(java.net.Proxy.Type.HTTP,
+                java.net.InetSocketAddress("127.0.0.1", forwarding.port)))
+            override fun connectFailed(uri: java.net.URI, address: java.net.SocketAddress, error: java.io.IOException) = Unit
+        })
+    }
+    @After fun closeOwnedProxy() {
+        val forwarding = proxy ?: return
+        java.net.ProxySelector.setDefault(oldProxy)
+        forwarding.close()
+        assertFalse("credentials leaked into CONNECT", forwarding.credentialLeak.get())
+    }
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private fun fixture(): JSONObject {
         val assets = instrumentation.context.assets
@@ -35,6 +56,7 @@ class WebSocketIntegrationTest {
                 Thread.sleep(250); progress = repository.pairing.checkStatus()
             }
             assertEquals(PairingPhase.APPROVED, progress.phase)
+            proxy?.let { assertTrue("HTTP CONNECT was not used", it.requests.get() > 0) }
             val profile = requireNotNull(progress.profile)
             alias = profile.clientKeyAlias
             assertEquals(3, profile.schemaVersion)
@@ -96,6 +118,7 @@ class WebSocketIntegrationTest {
                 assertEquals("relay_admission_rejected", failure.code)
                 assertFalse(failure.requestWritten)
                 assertFalse(failure.deliveryUnknown)
+                proxy?.let { assertTrue("HTTP CONNECT was not used", it.requests.get() > 0) }
             }
         } finally { AndroidDeviceIdentity().delete(identity.alias) }
     }
