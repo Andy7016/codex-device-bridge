@@ -18,6 +18,7 @@ class Window:
         self.root, self.host, self.invitation = root, host, None
         self.update_expires = None
         self.closing = False
+        self.refresh_after = None
         self.reopen_config = None
         root.title('Device Bridge '+__version__+' · 电脑连接')
         root.geometry('1100x950')
@@ -27,6 +28,8 @@ class Window:
         ttk.Label(body, text='扫码后核对两端六位数字，在本机选择允许访问的范围。').pack(anchor='w', pady=8)
         self.status = ttk.Label(body, wraplength=1000)
         self.status.pack(anchor='w')
+        self.phone_status = ttk.Label(body, wraplength=1000)
+        self.phone_status.pack(anchor='w')
         ttk.Label(body, text='当前配置：'+str(host.config_path), wraplength=1000).pack(anchor='w', pady=(4, 8))
         controls = ttk.Frame(body)
         controls.pack(fill='x', pady=5)
@@ -201,6 +204,7 @@ class Window:
         if self.closing:
             return
         self.status.configure(text=self.host.status)
+        self.phone_status.configure(text=self.host.phone_status.text())
         pending = self.host.pairing.pending()
         if pending != self.pending_rows:
             self.pending_rows = pending
@@ -227,31 +231,36 @@ class Window:
                 self.cancel_invite()
         else:
             self.countdown.configure(text='')
-        self.root.after(500, self.refresh)
+        self.refresh_after = self.root.after(500, self.refresh)
 
     def close(self):
         if self.closing:
             return
         self.closing = True
+        if self.refresh_after is not None:
+            self.root.after_cancel(self.refresh_after)
+            self.refresh_after = None
         self.root.withdraw()
-        completed = threading.Event()
+        # The worker owns only the host. Tk objects must stay on the GUI thread,
+        # including while the worker is releasing its last local references.
+        host = self.host
         errors = []
         def finish():
             try:
-                self.host.close()
+                host.close()
             except Exception as error:
-                errors.append(error)
-            finally:
-                completed.set()
+                errors.append(str(error))
         def poll():
-            if not completed.is_set():
+            if worker.is_alive():
                 self.root.after(50, poll)
                 return
+            worker.join()
             if errors:
                 self.reopen_config = None
                 messagebox.showerror('服务关闭未完成', '未切换配置。请保留原数据并重启程序检查连接状态。', parent=self.root)
             self.root.destroy()
-        threading.Thread(target=finish, daemon=False).start()
+        worker = threading.Thread(target=finish, daemon=False)
+        worker.start()
         self.root.after(50, poll)
 
 

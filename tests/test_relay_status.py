@@ -3,10 +3,24 @@ import ssl
 from types import SimpleNamespace
 import unittest
 
-from companion.connection_status import RelayStatus, failure_detail
+from companion.connection_status import PhoneStatus, RelayStatus, failure_detail
 
 
 class RelayStatusTests(unittest.TestCase):
+    def test_phone_diagnostics_are_bounded_and_accept_only_fixed_phases(self):
+        state = PhoneStatus()
+        self.assertIn('尚无手机通道到达', state.text())
+        for _ in range(10):
+            state.record('channel')
+            state.record('tls')
+            state.record('reply')
+        self.assertEqual(len(state.events), 3)
+        self.assertIn('本次启动10次', state.text())
+        self.assertIn('会话请求已回复', state.text())
+        with self.assertRaises(KeyError):
+            state.record('synthetic-secret-do-not-display')
+        self.assertNotIn('synthetic-secret', state.text())
+
     def test_live_waiting_slot_is_not_hidden_by_other_slots_failure_or_rotation(self):
         state = RelayStatus()
         state.update(1, 'waiting')

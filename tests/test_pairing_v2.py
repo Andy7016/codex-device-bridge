@@ -335,6 +335,11 @@ class IntegratedRelayTests(RelayFixture):
         self.assertTrue(self.rpc('catalog', {}, authenticated=True)['ok'])
         reply = self.rpc('history', {'thread': 'codex', 'before': None, 'limit': 8}, authenticated=True)
         self.assertEqual(reply['result']['messages'][0]['text'], 'Synthetic relay fixture')
+        deadline = time.monotonic()+1
+        while '会话请求已回复' not in self.host.phone_status.text() and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertEqual(self.host.phone_status.arrivals, 5)
+        self.assertIn('会话请求已回复', self.host.phone_status.text())
     def test_anonymous_rpc_and_unregistered_client_rejected(self):
         self.assertEqual(self.rpc('catalog', {}), {'ok': False, 'error': 'denied'})
         with self.assertRaises((OSError, EOFError)):

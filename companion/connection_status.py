@@ -1,10 +1,41 @@
 """Safe connection phases; never display remote error text or credentials."""
 import ssl
 import threading
+import time
+from collections import deque
 
 
 class RelayWaitEnded(ConnectionError):
     """An admitted host's unpaired, bounded waiting channel ended."""
+
+
+class PhoneStatus:
+    """Small in-memory trace of fixed phases; no peer data or remote strings."""
+    PHASES = {
+        'channel': '手机通道到达', 'tls': '手机身份验证完成',
+        'pair': '配对请求完成', 'reply': '会话请求已回复',
+        'tls_failed': '手机TLS连接失败', 'interrupted': '手机通道中断或超时',
+        'denied': '手机请求被拒绝', 'invalid': '手机请求格式不符',
+        'conflict': '操作状态冲突', 'internal': '本机请求处理失败',
+    }
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.events = deque(maxlen=3)
+        self.arrivals = 0
+
+    def record(self, phase):
+        message = self.PHASES[phase]
+        with self.lock:
+            if phase == 'channel':
+                self.arrivals += 1
+            self.events.append(time.strftime('%H:%M:%S')+' '+message)
+
+    def text(self):
+        with self.lock:
+            if not self.events:
+                return '手机接入诊断：本次启动尚无手机通道到达'
+            return f'手机接入诊断（本次启动{self.arrivals}次）：'+' → '.join(self.events)
 
 
 def failure_detail(error):

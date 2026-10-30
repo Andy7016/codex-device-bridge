@@ -14,7 +14,7 @@ from prototype.desktop import DesktopRecoveryService, NodeDesktopRuntime
 from prototype.journal import Conflict, Denied, Journal
 from .pairing import Pairing
 from .configuration import load_configuration
-from .connection_status import RelayStatus, RelayWaitEnded, failure_detail
+from .connection_status import PhoneStatus, RelayStatus, RelayWaitEnded, failure_detail
 from .security import certificate, fingerprint, private_address, public_id, server_context, unprotect
 from .wire import TLSStream, read_frame, relay_connect, send_frame
 
@@ -46,6 +46,7 @@ class Host:
             self.listener = None
             self.status = '尚未启动'
             self.relay_status = RelayStatus()
+            self.phone_status = PhoneStatus()
             self.last_tls_failure = None
         except BaseException:
             self.journal.close()
@@ -107,6 +108,7 @@ class Host:
     def serve_connection(self, transport):
         device, stream = None, None
         self._track(transport)
+        self.phone_status.record('channel')
         try:
             with self.context_lock:
                 # Enrollment is already committed when the phone observes an
@@ -126,6 +128,7 @@ class Host:
                 with self.active_lock:
                     self.active.setdefault(device, set()).add(transport)
                 self.journal.authorize_device(device)
+                self.phone_status.record('tls')
             request = read_frame(stream)
             if set(request) != {'method', 'params'}:
                 raise ValueError('invalid_request')
@@ -135,6 +138,7 @@ class Host:
             if method.startswith('pair.'):
                 result = self.pairing.call(method, params)
                 send_frame(stream, {'ok': True, 'result': result})
+                self.phone_status.record('pair')
                 return
             if not device:
                 raise Denied('client_identity_required')
@@ -144,18 +148,25 @@ class Host:
                 if self.identity.get('relay', {}).get('transport') == 'wss':
                     envelope['relayTicket'] = self.issue_ticket('phone:' + device[6:])
                 send_frame(stream, envelope, limit=65536)
+                self.phone_status.record('reply')
         except ssl.SSLError as error:
+            self.phone_status.record('tls_failed')
             self.last_tls_failure = str(getattr(error, 'reason', 'TLS_FAILURE'))[:80]
             return
         except (OSError, EOFError):
+            self.phone_status.record('interrupted')
             return
         except (Denied, InvalidSignature):
+            self.phone_status.record('denied')
             self._error(stream, 'denied')
         except Conflict:
+            self.phone_status.record('conflict')
             self._error(stream, 'conflict')
         except (ValueError, TypeError, KeyError, RecursionError):
+            self.phone_status.record('invalid')
             self._error(stream, 'invalid_request')
         except Exception:
+            self.phone_status.record('internal')
             self._error(stream, 'internal_error')
         finally:
             with self.active_lock:
