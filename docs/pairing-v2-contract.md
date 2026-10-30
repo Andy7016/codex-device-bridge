@@ -1,5 +1,7 @@
 # Pairing / relay v0.2 implementation contract
 
+> Legacy raw-TLS QR/profile fields are retained below. For current WSS, QR schemaVersion is 2 with `relay.transport/path/ticket`; the paired Android profile is schemaVersion 3. Current full API and versions: [0.3.8 API](review/API.md).
+
 Status: implementation specification, not a passed capability claim. No public deployment is authorized by this packet. Existing desktop runtime calls and approval policy remain unchanged.
 
 ## Identity and QR
@@ -47,7 +49,7 @@ Proof bytes are UTF-8 (no trailing newline):
 device-bridge-pair-v1\n<inviteId>\n<requestId>\n<hostId>\n<challenge>\n<clientCertificateSha256>
 ```
 
-`pair.prove` and `pair.status` exact params `{inviteId,inviteSecret,requestId,signature}`. signature is standard base64 DER ECDSA SHA256 over proof bytes. prove verifies key possession and makes the request visible for local confirmation. status also verifies proof. Return `{state:"pending"|"approved"|"denied",confirmationCode:<6digits>,expiresAt:<seconds>}`. Device is `phone-<SHA256 DER phone cert>`. Code is zero-padded `(int(SHA256(proof bytes).hex,16) mod 1000000)`.
+`pair.prove` and `pair.status` exact params `{inviteId,inviteSecret,requestId,signature}`. signature is standard base64 DER ECDSA SHA256 over proof bytes. prove verifies key possession and makes the request visible for local confirmation. status also verifies proof. Return `{state:"pending"|"approved",confirmationCode:<6digits>,expiresAt:<seconds>}`; denied invitations return the error envelope `error:"denied"`. WSS approved results also include `relayTicket`. Device is `phone-<SHA256 DER phone cert>`. Code is zero-padded `(int(SHA256(proof bytes).hex,16) mod 1000000)`.
 
 Approval requires local host UI confirmation of exact request, code and selected policy-scoped rights; read/send only, defaults read. Invitation consumed once; approval+device journal provisioning must be recoverable and fail closed on restart. Unconfirmed invites expire at 120 sec and invalidate on process restart. Approved result may be recovered for 10 min beyond invite expiry with same proof; cannot provision again or restore revoked identity. Phone durably saves pending QR + alias + requestId + challenge before prove; resumes same request after lost acknowledgements. No new key/ID on retry. No secrets in logs or ordinary config exports.
 

@@ -6,7 +6,7 @@
 - Keep desktop ChatGPT and Codex capability results separate. A second runtime or copied history does not demonstrate control of the original desktop session.
 - Consult current official OpenAI documentation through openaiDeveloperDocs before OpenAI integration work. Record desktop/CLI versions and schema provenance in validation results.
 - Mark proposed, documented, observed and tested capabilities distinctly. Never mark a test passed without execution evidence.
-- Validate the desktop integration before committing to a full Android or relay implementation. Choose stack and protocol from evidence; no stack has been selected yet.
+- Preserve the Kotlin/Compose Android, Python/Tk Windows host and shared WSS relay boundaries. Revalidate desktop integration before extending real write capabilities.
 
 ## Data and credentials
 
@@ -27,4 +27,5 @@
 
 - Keep each milestone reviewable; run checks appropriate to actual changes.
 - Recovery tests must account for duplicate delivery, lost acknowledgements, stale approvals and concurrent desktop/mobile actions.
-- Keep private repository visibility unless the user explicitly changes it.
+- The user authorized public repository visibility and separate Android/Windows 0.3.8 pre-releases on 2026-10-30. Public source and artifacts must exclude private runtime state; future visibility changes remain user decisions.
+- Read `agent/README.MD` for source maps, verification and publication constraints; it supplements these instructions.

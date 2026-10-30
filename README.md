@@ -1,70 +1,64 @@
-# 托管中继验证版 v0.3
-
-新增Cloudflare Workers + SQLite Durable Objects与Render Web Service的共用WSS传输方案。客户端保留端到端mTLS、稳定设备身份及原操作恢复；更换入口支持给原设备签发连接更新二维码。部署与Render逐步操作见[relay/README.md](relay/README.md)。
-
-该版先完成自有回环与模拟器验证；公网部署、真实运营商和VPN切换结果需独立记录。
-
-以下保留先前版本的实现与操作说明。
-
 # Codex Device Bridge
 
-面向 Android 的设备会话客户端：通过独立连接通路，访问指定 Windows 电脑上已有的 ChatGPT 与 Codex 会话。
+在 Android 上浏览 Windows 电脑中已授权的 Codex 会话，并通过独立连接通路发送文本。电脑保留原会话、执行环境和账户凭据；手机扫码绑定设备身份，跨网使用自建中继，局域网直连作为可选优化。
 
-## 项目状态
+**当前版本：0.3.8，实验性预发行。** 项目独立开发，与 OpenAI 无官方隶属关系。部分桌面控制依赖特定版本的内部接口，桌面升级后需要重新验证。
 
-2026-10-29：Companion 0.2.1 增加离线首次启动向导，可在没有host.json、中继或策略时生成本机身份并自动载入；支持后续补填连接设置和导入策略，保留原身份及恢复日志。
+## 下载与安装
 
-2026-10-29：Android v0.2 已实现扫码/图片配对、手机 Keystore 身份、电脑端确认与设备撤销、双向 TLS 中继通路及可选局域网候选连接。API 35 模拟器已完成合成会话的实际加密中继发送与丢确认核对。提供 Windows 便携程序和中继源码/容器部署文件；尚无公网中继，也未完成实体手机与 VPN 切换验证。原 Codex 适配器沿用 v0.1，ChatGPT 合法常驻入口、手机审批和完整项目管理仍待接入。
+| 平台 | 发行入口 | 使用条件 |
+| --- | --- | --- |
+| Android | [Android 0.3.8](https://github.com/vvcchh0/codex-device-bridge/releases/tag/android-v0.3.8) | Android 8.0/API 26 及以上；本轮设备测试使用 API 35 模拟器 |
+| Windows | [Companion 0.3.8](https://github.com/vvcchh0/codex-device-bridge/releases/tag/windows-v0.3.8) | Windows x64；便携目录完整解压；真实会话操作需要原 Codex 桌面环境和 Node.js 22+ |
 
-桌面入口属于当前安装版本内部协议，需按版本重新验证；不能视为已获得稳定公开 API。
+Android 包的内部版本为 **0.3.8（versionCode 8）**，包名 `io.github.vvcchh0.devicebridge`。本次公开的是已验证的 **debug APK**，可调试、使用调试证书；Windows 程序尚未作发布者代码签名。两者用于开发审阅与受控试用。发行页附 SHA-256 和构建说明；校验值用于核对下载完整性。
 
-优先验证桌面上同一条会话的接入能力，再实施连接与恢复原型，最后开发 Android 界面。单独启动一个 Codex 实例不能作为已接入当前桌面会话的证明。
+已有同签名 Android 版本可覆盖安装。保留应用数据，才能沿用手机身份、配对和待核对操作。Windows 升级时先正常关闭旧程序，再打开新版并选择原有完整 `host.json`。原配置所在目录可以带有旧版本号，这不会改变当前运行程序的版本。
 
-## 已确认方向
+## 0.3.8 能做什么
 
-- Android 原生会话界面 + 电脑端连接代理 + 独立中继。
-- 访问当前桌面应用内的 ChatGPT 与 Codex 会话，包括历史、对话、项目、新建、模型与推理强度、审批、附件。
-- 手机和电脑优先主动建立出站连接，研究与现有代理共存、断线恢复和后台通知。
-- 聚焦结构化会话操作；屏幕传输、鼠标键盘控制和通用远程桌面不在首版范围。
-- 电脑端保留执行环境和 OpenAI 凭据；移动设备拥有的操作能力由电脑端限制。
-- 连接和恢复验证包括授权范围内的攻击测试，使用隔离环境、测试身份与合成数据。
+| 能力 | 当前状态 |
+| --- | --- |
+| 扫码配对、电脑核对六位码、选择会话范围、撤销手机 | 已实现；设备身份与 IP 分离 |
+| Codex 会话清单、历史分页、手机加密缓存 | 已实现；只返回主机策略及手机授权共同允许的目标 |
+| 长回复 | 先显示开头，点击“展开全文”继续加载；特别长的文本可多次展开 |
+| 发送 Codex 文本 | 已实现受限发送链路；主机和手机都需 `send` 权限；自由输入需主机单独启用 |
+| 断线与未知结果核对 | 持久保存操作 ID；可能已送达的操作保留 `unknown`，只核对、不自动重发 |
+| 助手问题 | 可显示历史问题和选项；实时作答入口待实现 |
+| 手机审批、模型/推理强度、附件、项目新建管理 | 尚未接通；接口明确返回能力不可用 |
+| 当前桌面 ChatGPT 会话 | 已有活动任务上下文内的接入实验；可供手机使用的合法常驻入口仍待完成 |
 
-## 文档
+历史读取使用本机只读存储接口；原运行时发送使用另一条受限适配路径。历史可读不能作为发送或审批已经接通的验收结果。具体证据见 [0.3.8 验证记录](docs/results/2026-10-30-full-text-v038.md)。
 
-- [需求和验收边界](docs/requirements.md)
-- [架构与待验证决策](docs/architecture.md)
-- [桌面接口验证](docs/desktop-capability-validation.md)
-- [连接、恢复与攻击测试计划](docs/validation-plan.md)
-- [桌面接入实测结果](docs/results/2026-10-28-desktop-probe.md)
-- [原运行时真实消息与审批结果](docs/results/2026-10-28-desktop-runtime-control.md)
-- [桌面适配代码与运行边界](desktop/README.md)
-- [专用会话测试包](docs/desktop-test-packet.md)
-- [真实 Codex 恢复主机运行方式](prototype/DESKTOP.md)
-- [原运行时与恢复层贯通结果](docs/results/2026-10-28-integrated-recovery.md)
-- [ChatGPT 常驻入口调查](docs/results/2026-10-28-chatgpt-background-entry.md)
-- [Android APP 构建与连接](android/README.md)
-- [电脑端与中继部署](companion/README.md)
-- [Companion 离线首次启动验证](docs/results/2026-10-29-companion-startup-v021.md)
-- [扫码配对与中继协议](docs/pairing-v2-contract.md)
-- [Android v0.2 配对与中继验证](docs/results/2026-10-29-pairing-relay-v02.md)
-- [Android v0.1 验证结果](docs/results/2026-10-28-android-v01.md)
-- [本地恢复实验原型与运行方式](prototype/README.md)
-- [21 项测试结果及覆盖边界](docs/results/2026-10-28-recovery-lab.md)
+## 首次连接
 
-## 首个里程碑
+1. 在 Windows 解压并运行 `DeviceBridge-Companion.exe`。没有配置时，先创建本机身份；可以暂时不填中继和会话策略。
+2. 准备两端均可访问的 WSS 中继。仓库提供 [Cloudflare 和 Render 部署步骤](relay/README.md)，本项目没有向所有下载者提供公共中继服务。
+3. 在电脑版“连接与会话范围设置”中填写 `wss://你的中继域名`，通常使用默认 443 端口及系统证书信任。导出 WSS 登记，把完整 JSON 放入该后端的 `RELAY_REGISTRATIONS_JSON` 私密配置。
+4. 导入只包含你允许访问的 Codex 会话的策略。空策略可以启动程序，但不会向手机提供会话。策略示例见 [后端说明](docs/review/BACKEND.md)。
+5. 电脑版生成配对二维码；手机扫码或从图片导入。核对两端六位码，在电脑勾选读取范围，以及确有需要的发送范围，确认配对。
+6. 在手机选择会话并刷新。首次验证建议只授权专用测试会话，发送一条不要求工具操作的合成消息。
 
-分别验证一条已有 Codex 会话和一条已有 ChatGPT 会话：是否能读取历史、发消息、接收活动任务事件、处理审批，并保留项目归属与执行上下文。根据证据决定适配路线，不提前承诺完整接口覆盖。
+`host.json` 只是配置入口；完整电脑身份还依赖同目录私有材料和当前 Windows 用户的 DPAPI。保留原身份目录，按私有数据管理。中继只需要导出的公钥与注册凭据哈希；不要上传电脑私钥、手机材料、会话策略或恢复数据库。
 
-此仓库计划保持 GitHub private。远端可见性由 GitHub 设置决定，忽略规则不提供访问控制。
+## VPN、代理和断线
 
-## 官方依据
+手机和电脑都主动连接中继。IP 或 VPN 状态变化通常不需要重新配对，但会打断现有通道，恢复速度取决于网络路由、代理和托管服务。浏览器能打开 `/healthz` 只证明 HTTPS 可达，还需验证 App 的 WebSocket 与内部 TLS。
 
-以下文档于 2026-10-28 查阅；实现时需重新核对本机版本和对应 schema。
+Android 支持系统路由/VPN、系统选择的 SOCKS，以及无需认证的显式 HTTP CONNECT 代理。代理需要账号认证时会停止并提示；不会提交浏览器保存的密码。连接是否需要代理取决于所在网络，中继无法保证所有运营商和 VPN 组合均可达。
 
-- [Codex App Server](https://learn.chatgpt.com/docs/app-server)
-- [Remote connections](https://learn.chatgpt.com/docs/remote-connections)
-- [Android Doze and App Standby](https://developer.android.com/training/monitoring-device-state/doze-standby)
-- [Android Keystore](https://developer.android.com/privacy-and-security/keystore)
-- [Android VPN](https://developer.android.com/develop/connectivity/vpn)
+看到“待核对”时使用核对功能，保留原操作 ID。撤销会阻止后续授权操作，并取消尚未分发的队列；已经进入原运行时的任务，以及已经下载的历史缓存，需要分别处理。窗口关闭会停止 Companion；当前没有托盘常驻、安装服务、自启动或后台推送。
 
-本项目独立开发，与 OpenAI 无官方隶属关系。
+## 给开发者与审阅者
+
+- [工作流与恢复状态机](docs/review/WORKFLOWS.md)：配对、读取、发送、切网、撤销。
+- [后端实现与本地策略](docs/review/BACKEND.md)：组件边界、桌面适配、Cloudflare/Render、构建与测试。
+- [API 参考](docs/review/API.md)：真实支持的方法、字段、错误、资源上限及版本。
+- [Agent 开发指南](agent/README.MD)：源码入口、验证命令、受保护材料和修改约束；同时遵守 [AGENTS.md](AGENTS.md)。
+- [安全边界与报告方式](SECURITY.md)、[发布说明与校验](docs/releases/README.md)。
+
+`docs/results/` 为按日期记录的实验结果；早期文档可能描述当时尚未实现的功能。以上 0.3.8 审阅文档描述本次发行状态。
+
+## 许可证与第三方
+
+仓库目前尚未指定项目开源许可证，公开发布用于审阅与讨论。[第三方说明](THIRD_PARTY_NOTICES.md)列出主要依赖及发行附件中的许可证材料。

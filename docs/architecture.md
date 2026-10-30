@@ -1,5 +1,7 @@
 # 架构与待验证决策
 
+> 本文保留2026-10-28的设计与阶段判断。当前0.3.8已实现扫码配对、Android、托管WSS中继与历史缓存；当前结构和边界请读[后端实现](review/BACKEND.md)、[工作流](review/WORKFLOWS.md)和[API](review/API.md)。下文的“待实现”只描述当时状态。
+
 状态：2026-10-28。独立 Codex 适配已与本机恢复日志、mTLS 服务及 Android v0.1 串接并验证；独立中继尚未实施。
 
 同日 Android v0.1 已实现并完成本机模拟器贯通，见[客户端说明](../android/README.md)。当前原生 UI 通过回环 mTLS/USB 通路访问授权会话，独立中继、ChatGPT 常驻和生产配对仍为待实现部分。

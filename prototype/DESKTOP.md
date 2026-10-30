@@ -1,5 +1,7 @@
 # 真实 Codex 恢复主机
 
+> 本文描述早期loopback集成实验；0.3.8产品入口为`companion/host.py`，已经具有扫码配对、WSS及Android。当前协议和部署边界见[API](../docs/review/API.md)与[后端](../docs/review/BACKEND.md)。不要将下文的合成/旧实验能力直接当作手机API。
+
 原 journal 和 loopback mTLS 服务已接到独立 Codex follower，见[贯通结果](../docs/results/2026-10-28-integrated-recovery.md)和[测试包](../docs/integrated-test-packet.md)。ChatGPT 尚未接入。
 
 ## 组件和前提

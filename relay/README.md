@@ -80,6 +80,6 @@ npm run check:cloudflare
 
 `npm test`是共享协议/Node适配器测试，`npm run check:cloudflare`是部署dry-run。Python `tests/test_wss_relay.py`用同一测试切换Node或本地workerd；`WSS_TEST_BACKEND=cloudflare`选择后者。它们使用临时回环端口和合成身份。
 
-Android使用Java-WebSocket1.6.0的帧/累计消息上限、独立SSLEngine、指定Keystore身份与精确电脑证书固定。默认网络变化时中止旧承载并恢复只读核对，取消后禁止换路重试。HTTP显式代理当前失败关闭；SOCKS可按系统ProxySelector选择，VpnService/TUN由系统路由处理。后台推送、真实VPN组合、更多Android版本及公网持续运行仍需后续验证。
+Android使用Java-WebSocket1.6.0的帧/累计消息上限、独立SSLEngine、指定Keystore身份与精确电脑证书固定。默认网络变化时中止旧承载并恢复只读核对，取消后禁止换路重试。Android 0.3.2起支持无需认证的显式HTTP CONNECT代理，隧道之后继续验证外层TLS；需要代理认证、重定向和畸形响应均失败关闭。SOCKS可按系统ProxySelector选择，VpnService/TUN由系统路由处理。后台推送、真实VPN组合、更多Android版本及公网持续运行仍需后续验证。
 
 参考：[Cloudflare Hibernation](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)、[Workers Access与WebSocket限制](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)、[Render Node部署](https://render.com/docs/deploy-node-express-app)、[Render环境变量](https://render.com/docs/configure-environment-variables)、[Render免费实例](https://render.com/docs/free)。

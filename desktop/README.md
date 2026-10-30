@@ -1,5 +1,7 @@
 # 桌面原运行时适配实验
 
+> 本文保留最初桌面适配实验的环境、能力与约束；当前Android/Windows产品边界见[0.3.8后端说明](../docs/review/BACKEND.md)。特别是本地审批实验尚未接成手机审批API。
+
 本目录包含可运行的 Windows 本地适配代码。2026-10-28 已在两条用户授权的专用测试会话完成真实消息往返，并在 Codex 原运行时完成真实命令审批取消与单次允许。详细证据和限制见[实测报告](../docs/results/2026-10-28-desktop-runtime-control.md)。
 
 当前是固定安装版本的内部接口实验。独立 Codex send/inspect 已接入[本机恢复主机](../prototype/DESKTOP.md)，有 loopback mTLS 监听，没有远端监听或 Android 客户端。运行前需具备同一用户对桌面管道的访问权限；不要扩大 ACL 或管理员常驻。
