@@ -392,7 +392,7 @@ private fun ChatPage(
                 }
             } else {
                 items(state.messages, key = { "message-${it.id}" }) { message ->
-                    ChatMessageBubble(message)
+                    ChatMessageBubble(message, canExpand = !state.busy && isConnected(state.connection), onExpand = { actions.expandMessage(message.id) })
                 }
             }
             val visibleOperations = state.operations.filter { op ->
@@ -540,7 +540,7 @@ private fun EmptyConversation(hasSession: Boolean, connected: Boolean) {
 }
 
 @Composable
-private fun ChatMessageBubble(message: ChatMessage) {
+private fun ChatMessageBubble(message: ChatMessage, canExpand: Boolean = false, onExpand: () -> Unit = {}) {
     val role = message.role.lowercase()
     if (role == "tool" || role == "tool_result" || role == "tool-result") {
         Card(
@@ -600,6 +600,17 @@ private fun ChatMessageBubble(message: ChatMessage) {
                             style = MaterialTheme.typography.bodyLarge,
                             color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                         )
+                    }
+                    if (message.nextPart != null) {
+                        TextButton(onClick = onExpand, enabled = canExpand,
+                            colors = ButtonDefaults.textButtonColors(contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.testTag("expand-message-${message.id}")) {
+                            Text("展开全文 · 约${(message.totalBytes+1023)/1024} KB")
+                        }
+                    }
+                    if (message.hasQuestions) {
+                        Text("提问记录；当前仅显示内容，作答入口尚未开放。", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (message.status.isNotBlank()) {
                         Spacer(Modifier.height(5.dp))

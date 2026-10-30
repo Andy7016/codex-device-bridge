@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
                     importPairingImage = { pairingImagePicker.launch(arrayOf("image/*")) },
                     checkPairing = model::checkPairing,
                     discardPairing = model::discardPairing,
+                    expandMessage = model::expandMessage,
                 ))
             }
         }

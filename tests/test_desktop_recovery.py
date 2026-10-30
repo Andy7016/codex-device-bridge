@@ -237,6 +237,18 @@ class DesktopRecovery(unittest.TestCase):
         with self.assertRaises(Denied):
             self.service.call('phone', 'history', {'thread': 'codex', 'before': None, 'limit': 6, 'ifRevision': first['revision']})
 
+    def test_full_text_fragments_require_host_and_device_read_scope(self):
+        self.runtime.message = lambda label, target, cursor: {'id': 'message', 'text': 'fragment', 'nextPart': None}
+        result = self.service.call('phone', 'message', {'thread': 'codex', 'cursor': 'synthetic-cursor'})
+        self.assertEqual(result['text'], 'fragment')
+        with self.assertRaises(Denied): self.service.call('phone', 'message', {'thread': 'other', 'cursor': 'synthetic-cursor'})
+        with self.assertRaises(ValueError): self.service.call('phone', 'message', {'thread': 'codex', 'cursor': 'x'*129})
+        self.service.policy['targets']['codex']['rights'] = []
+        with self.assertRaises(Denied): self.service.call('phone', 'message', {'thread': 'codex', 'cursor': 'synthetic-cursor'})
+        self.service.policy['targets']['codex']['rights'] = ['read']
+        self.service.revoke('phone')
+        with self.assertRaises(Denied): self.service.call('phone', 'message', {'thread': 'codex', 'cursor': 'synthetic-cursor'})
+
     def test_revocation_during_history_read_suppresses_returned_content(self):
         self.runtime.prepare = lambda: self.service.revoke('phone')
         with self.assertRaises(Denied): self.service.call('phone', 'history', {'thread': 'codex', 'before': None, 'limit': 6})

@@ -67,7 +67,10 @@ class StoredHistoryTests(unittest.TestCase):
                     patch.object(NodeDesktopRuntime, 'history', return_value={'runtimeStatus': 'idle'}) as live:
                 self.assertEqual(runtime.history('read', 'target', None, 1)['runtimeStatus'], 'unknown')
                 self.assertEqual(runtime.history('live', 'target', None, 1)['runtimeStatus'], 'idle')
-                stored.assert_called_once(); live.assert_called_once()
+                self.assertEqual(stored.call_count, 2); live.assert_called_once()
+            with patch.object(runtime.stored, 'history', return_value={'runtimeStatus': 'unknown', 'messages': []}), \
+                    patch.object(NodeDesktopRuntime, 'history', side_effect=OSError('synthetic unavailable')):
+                self.assertEqual(runtime.history('live', 'target', None, 1)['runtimeStatus'], 'unknown')
             runtime.close()
 
     def test_large_turn_is_split_without_skipping_messages(self):
@@ -109,6 +112,47 @@ class StoredHistoryTests(unittest.TestCase):
         self.assertEqual(len(page['messages']), 1)
         self.assertLess(len(page['messages'][0]['text'].encode()), 2500)
         self.assertNotIn('synthetic tool content', str(page))
+        self.assertIsNotNone(page['messages'][0]['nextPart'])
+
+    def test_expand_preserves_complete_utf8_text_without_truncation(self):
+        client = Client()
+        original = ('第一行😀\nsecond line "quoted"\\tail\n'*3000)
+        client.turns = [{'id': 'one', 'status': 'completed', 'items': [
+            {'id': 'long', 'type': 'agentMessage', 'text': original}]}]
+        reader = StoredHistoryReader(client)
+        preview = reader.history('target', None, 6)['messages'][0]
+        self.assertTrue(original.startswith(preview['text']))
+        self.assertNotIn('内容已截断', preview['text'])
+        text, cursor = preview['text'], preview['nextPart']
+        while cursor:
+            fragment = reader.message('target', cursor)
+            self.assertLess(len(json.dumps(fragment, ensure_ascii=False).encode()), 64000)
+            self.assertEqual(fragment['contentHash'], preview['contentHash'])
+            text += fragment['text']; cursor = fragment['nextPart']
+        self.assertEqual(text, original)
+
+    def test_expansion_cursors_are_typed_bound_and_invalidated_by_edits(self):
+        client = Client()
+        client.turns[0]['items'] = [{'id': 'long', 'type': 'agentMessage', 'text': 'x'*20000}]
+        reader = StoredHistoryReader(client)
+        cursor = reader.history('first', None, 1)['messages'][0]['nextPart']
+        with self.assertRaises(HistoryChanged): reader.message('second', cursor)
+        with self.assertRaises(HistoryChanged): reader.history('first', cursor, 1)
+        client.turns[0]['items'][0]['text'] += 'edit'
+        with self.assertRaises(HistoryChanged): reader.message('first', cursor)
+
+    def test_async_questions_are_visible_even_without_body_text(self):
+        client = Client()
+        client.turns = [{'id': 'turn', 'status': 'completed', 'items': [{'id': 'call-synthetic',
+            'type': 'agentMessage', 'text': '', 'questions': [{'title': '合成问题？', 'options': ['选项一', '选项二']}]}]}]
+        message = StoredHistoryReader(client).history('target', None, 6)['messages'][0]
+        self.assertIn('合成问题？', message['text'])
+        self.assertIn('选项一', message['text'])
+        self.assertEqual(json.loads(message['questions'][0]['id']), ['request_user_input_async', 'call-synthetic', 0])
+        client.turns[0]['items'][0]['questions'] *= 4
+        message = StoredHistoryReader(client).history('target', None, 6)['messages'][0]
+        self.assertEqual(message['text'].count('合成问题？'), 4)
+        self.assertEqual(len(message['questions']), 3)
 
     def test_tool_only_turns_return_a_continuation_instead_of_hiding_older_messages(self):
         client = Client()

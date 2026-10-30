@@ -85,7 +85,7 @@ class ReadOnlyHistoryProcess:
 
             self.reader = threading.Thread(target=read, daemon=True)
             self.reader.start()
-            self._request('initialize', {'clientInfo': {'name': 'device_bridge_stored_history', 'version': '0.3.7'}})
+            self._request('initialize', {'clientInfo': {'name': 'device_bridge_stored_history', 'version': '0.3.8'}})
             self.process.stdin.write(b'{"method":"initialized","params":{}}\n')
             self.process.stdin.flush()
         except Exception:
@@ -165,11 +165,23 @@ def project_turn(turn):
         else:
             # Summary mode intentionally omits full command/tool output.
             continue
-        if text:
-            encoded = str(text).encode('utf8')
-            text = encoded[:2400].decode('utf8', errors='ignore') + ('\n…（内容已截断）' if len(encoded) > 2400 else '')
+        text = str(text or '')
+        questions = item.get('questions', []) if kind == 'agentMessage' else []
+        projected_questions = []
+        if isinstance(questions, list):
+            for question_index, question in enumerate(questions):
+                if not isinstance(question, dict) or not isinstance(question.get('title'), str):
+                    continue
+                options = question.get('options')
+                choices = [v for v in options if isinstance(v, str)] if isinstance(options, list) else []
+                text = str(text)+('\n\n' if text else '')+'提问：'+question['title']+('\n可选回答：\n'+'\n'.join('• '+v for v in choices) if choices else '')
+                if len(projected_questions) < 3:
+                    projected_questions.append({'id': json.dumps(['request_user_input_async', str(item.get('id', ''))[:128], question_index], separators=(',', ':')),
+                        'title': question['title'][:256], 'options': [v[:128] for v in choices[:12]]})
+        if text or projected_questions:
             messages.append({'id': turn_id+':'+str(item.get('id', index))[:128], 'role': role,
-                             'text': text, 'status': str(turn.get('status', ''))[:32]})
+                             'text': str(text), 'status': str(turn.get('status', ''))[:32],
+                             **({'questions': projected_questions} if projected_questions else {})})
     return messages
 
 
@@ -188,16 +200,52 @@ class StoredHistoryReader:
             self.cursors.popitem(last=False)
         return token
 
+    def _saved(self, target, cursor, kind):
+        saved = self.cursors.get(cursor)
+        if not saved or saved[1] != target or time.monotonic()-saved[0] > 1800 or saved[2].get('kind', 'page') != kind:
+            raise HistoryChanged()
+        return dict(saved[2])
+
+    @staticmethod
+    def _slice(text, offset, budget):
+        raw = text.encode('utf8')
+        end = min(len(raw), offset+budget)
+        while end < len(raw) and end > offset and raw[end] & 0xc0 == 0x80:
+            end -= 1
+        return raw[offset:end].decode('utf8'), end, len(raw)
+
+    def _preview(self, target, state, message):
+        text, end, total = self._slice(message['text'], 0, 2400)
+        next_part = self._cursor(target, {'kind': 'text', 'cursor': state['cursor'], 'message': message['id'],
+            'generation': digest(message), 'offset': end}) if end < total else None
+        return {**message, 'text': text, 'nextPart': next_part, 'totalBytes': total, 'contentHash': digest(message)}
+
+    def message(self, target, cursor):
+        with self.lock:
+            state = self._saved(target, cursor, 'text')
+            reply = self.client.request('thread/turns/list', {'threadId': target, 'cursor': state['cursor'],
+                'limit': 1, 'itemsView': 'summary', 'sortDirection': 'desc'})
+            turns = reply.get('data', [])
+            messages = project_turn(turns[0]) if len(turns) == 1 else []
+            message = next((item for item in messages if item['id'] == state['message']), None)
+            if message is None or digest(message) != state['generation']:
+                raise HistoryChanged()
+            budget = 24000
+            while True:
+                text, end, total = self._slice(message['text'], state['offset'], budget)
+                if len(json.dumps(text, ensure_ascii=False).encode()) <= 32000:
+                    break
+                budget //= 2
+            next_part = self._cursor(target, {**state, 'offset': end}) if end < total else None
+            return {'id': message['id'], 'text': text, 'nextPart': next_part, 'totalBytes': total, 'contentHash': digest(message)}
+
     def history(self, target, before, limit):
         if type(limit) is not int or not 1 <= limit <= 8:
             raise ValueError('invalid_history_page')
         with self.lock:
             state = {'cursor': None, 'skip': 0, 'generation': None}
             if before is not None:
-                saved = self.cursors.get(before)
-                if not saved or saved[1] != target or time.monotonic()-saved[0] > 1800:
-                    raise HistoryChanged()
-                state = dict(saved[2])
+                state = self._saved(target, before, 'page')
             deadline = time.monotonic()+12
             for _ in range(8):
                 if time.monotonic() >= deadline:
@@ -219,10 +267,10 @@ class StoredHistoryReader:
                     raise HistoryChanged()
                 if end or next_cursor is None:
                     start = max(0, end-limit)
-                    page = messages[start:end]
+                    page = [self._preview(target, state, message) for message in messages[start:end]]
                     while len(page) > 1 and len(json.dumps(page, ensure_ascii=False).encode()) > 6200:
                         start += 1
-                        page = messages[start:end]
+                        page = [self._preview(target, state, message) for message in messages[start:end]]
                     next_before = None
                     if start:
                         next_before = self._cursor(target, {'cursor': state['cursor'], 'skip': len(messages)-start,
@@ -231,12 +279,12 @@ class StoredHistoryReader:
                         next_before = self._cursor(target, {'cursor': next_cursor, 'skip': 0, 'generation': None})
                     return {'messages': page, 'nextBefore': next_before, 'hasMore': next_before is not None,
                             'runtimeStatus': 'unknown', 'historyComplete': next_before is None,
-                            'source': 'stored-history-summary-v1'}
+                            'source': 'stored-history-preview-v2'}
                 state = {'cursor': next_cursor, 'skip': 0, 'generation': None}
             # An empty bounded page still advances over tool-only turns.
             next_before = self._cursor(target, state)
             return {'messages': [], 'nextBefore': next_before, 'hasMore': True,
-                    'runtimeStatus': 'unknown', 'historyComplete': False, 'source': 'stored-history-summary-v1'}
+                    'runtimeStatus': 'unknown', 'historyComplete': False, 'source': 'stored-history-preview-v2'}
 
     def close(self):
         cancel = getattr(self.client, 'cancel', None)
@@ -259,9 +307,17 @@ class BridgeDesktopRuntime(NodeDesktopRuntime):
     def history(self, label, target, before, limit):
         # Preserve original-owner readiness for explicitly send-enabled
         # targets. Stored/cached state never grants readiness for a mutation.
+        page = self.stored.history(target, before, limit)
         if label in self.live_labels:
-            return super().history(label, target, before, limit)
-        return self.stored.history(target, before, limit)
+            try:
+                live = super().history(label, target, None, 1)
+                page['runtimeStatus'] = live.get('runtimeStatus', 'unknown')
+            except (DesktopUnavailable, OSError):
+                pass
+        return page
+
+    def message(self, label, target, cursor):
+        return self.stored.message(target, cursor)
 
     def cancel(self):
         self.stored.client.cancel()

@@ -42,6 +42,27 @@ internal class HistoryCache(private val context: Context) {
     @Synchronized
     fun clear(profile: String) { vault(profile).delete() }
 
+    @Synchronized
+    fun appendMessage(profile: String, session: String, id: String, cursor: String, fragment: JSONObject) {
+        try {
+            val pages = read(profile)
+            for (i in 0 until pages.length()) {
+                val entry = pages.getJSONObject(i)
+                if (entry.optString("sessionKey") != session) continue
+                val page = entry.getJSONObject("page")
+                val messages = page.getJSONArray("messages")
+                for (j in 0 until messages.length()) {
+                    val message = messages.getJSONObject(j)
+                    if (message.optString("id") == id && message.optString("nextPart") == cursor && message.optString("contentHash") == fragment.optString("contentHash")) {
+                        message.put("text", message.getString("text")+fragment.getString("text"))
+                        message.put("nextPart", fragment.opt("nextPart") ?: JSONObject.NULL)
+                        save(profile, session, entry.optString("before").ifEmpty { null }, page)
+                    }
+                }
+            }
+        } catch (_: Exception) { }
+    }
+
     private fun read(profile: String): JSONArray {
         try {
             val record = vault(profile)

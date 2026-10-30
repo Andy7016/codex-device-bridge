@@ -105,6 +105,7 @@ class BridgeTransport internal constructor(private val exchange: RouteExchange) 
         val fields = when (method) {
             "catalog" -> emptySet()
             "history" -> setOf("thread", "before", "limit")
+            "message" -> setOf("thread", "cursor")
             "submit" -> setOf("thread", "id", "payload")
             "status", "reconcile" -> setOf("id")
             "sync" -> setOf("thread", "cursor")
@@ -114,6 +115,7 @@ class BridgeTransport internal constructor(private val exchange: RouteExchange) 
         if (supplied != fields && !(method == "history" && supplied == fields + "ifRevision")) throw BridgeFailure("invalid_params", deliveryUnknown = false)
         when (method) {
             "catalog" -> Unit
+            "message" -> { requireString(params, "thread", 1, MAX_ALIAS_CHARS); requireString(params, "cursor", 1, 128) }
             "history" -> {
                 if (params.has("ifRevision") && !Regex("[0-9a-f]{64}").matches(params.optString("ifRevision"))) throw BridgeFailure("invalid_params", false)
                 requireString(params, "thread", 1, MAX_ALIAS_CHARS)

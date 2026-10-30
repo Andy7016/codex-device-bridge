@@ -140,7 +140,7 @@ class NodeDesktopRuntime:
 class DesktopRecoveryService:
     METHODS = {"submit": {"thread", "id", "payload"}, "status": {"id"},
                "sync": {"thread", "cursor"}, "reconcile": {"id"},
-               "catalog": set(), "history": {"thread", "before", "limit"}}
+               "catalog": set(), "history": {"thread", "before", "limit"}, "message": {"thread", "cursor"}}
 
     def __init__(self, journal, runtime, policy, *, devices):
         self.journal, self.runtime = journal, runtime
@@ -259,6 +259,17 @@ class DesktopRecoveryService:
                                  "freeText": can_send and target.get("allowFreeText") is True})
             with self.response_guard(device):
                 return {"sessions": sessions, "capabilities": {"chatgpt": False, "approvals": False, "settings": False, "files": False}}
+        if method == 'message':
+            target = self._target(params['thread'])
+            self.journal.authorize(device, params['thread'], 'read')
+            if 'read' not in target.get('rights', []):
+                raise Denied('host read permission missing')
+            if not isinstance(params['cursor'], str) or not 1 <= len(params['cursor']) <= 128:
+                raise ValueError('invalid_message_cursor')
+            result = self.runtime.message(params['thread'], target['threadId'], params['cursor'])
+            with self.response_guard(device):
+                self.journal.authorize(device, params['thread'], 'read')
+                return result
         if method == "history":
             target = self._target(params["thread"])
             self.journal.authorize(device, params["thread"], "read")

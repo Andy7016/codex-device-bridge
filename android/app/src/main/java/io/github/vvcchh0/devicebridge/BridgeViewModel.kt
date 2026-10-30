@@ -184,6 +184,28 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         refreshData(p)
     }
 
+    fun expandMessage(id: String) = action {
+        val p = profile ?: return@action
+        val label = mutable.value.selectedSession ?: return@action
+        var message = mutable.value.messages.firstOrNull { it.id == id } ?: return@action
+        try {
+            repeat(8) {
+                val cursor = message.nextPart ?: return@action
+                val part = withContext(Dispatchers.IO) { repository.message(p, label, cursor) }
+                if (part.id != id || part.contentHash != message.contentHash) throw BridgeFailure("history_changed", false)
+                message = message.copy(text = message.text+part.text, nextPart = part.nextPart)
+                mutable.update { state -> state.copy(messages = state.messages.map { if (it.id == id) message else it }) }
+            }
+            if (message.nextPart != null) mutable.update { it.copy(notice = "已加载更多内容；可点击继续展开。") }
+        } catch (e: BridgeFailure) {
+            if (e.code == "denied") { repository.clearHistory(p); mutable.update { it.copy(messages = emptyList(), historyCached = false) } }
+            if (e.code != "history_changed") throw e
+            repository.clearHistory(p); historyExpanded = false; nextBefore = null
+            refreshData(p)
+            mutable.update { it.copy(notice = "回复已更新或读取游标已过期，已重新加载。") }
+        }
+    }
+
     fun reconcile(id: String) = action {
         val p = profile ?: return@action
         withContext(Dispatchers.IO) { repository.reconcile(p, id) }; refreshData(p)
@@ -374,11 +396,16 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
         runtimeStatus = page.runtimeStatus
         if (!historyExpanded) nextBefore = page.nextBefore
         mutable.update { old ->
+            val refreshed = page.messages.map { fresh ->
+                val previous = old.messages.firstOrNull { it.id == fresh.id }
+                if (fresh.contentHash.isNotEmpty() && previous?.contentHash == fresh.contentHash && previous.text.length > fresh.text.length)
+                    fresh.copy(text = previous.text, nextPart = previous.nextPart) else fresh
+            }
             val messages = if (historyExpanded) {
                 val merged = LinkedHashMap<String, ChatMessage>()
-                (old.messages + page.messages).forEach { merged[it.id] = it }
+                (old.messages + refreshed).forEach { merged[it.id] = it }
                 merged.values.toList()
-            } else page.messages
+            } else refreshed
             old.copy(messages = messages, operations = operations, hasMoreHistory = nextBefore != null, historyCached = false,
             notice = if (unresolved) "有原操作仍待核对，记录已保留；当前消息浏览不受影响。" else old.notice,
             lastSync = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())) }

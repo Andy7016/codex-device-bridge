@@ -37,6 +37,8 @@
 | device-bridge-0.3.7-debug.apk | 11415129 | ccfb8a881220275fc413d6c66e2625f978643f049a9646e8b64ac994dee226fb |
 | device-bridge-companion-0.3.7-windows.zip | 25882494 | 7d3cb468a22d12e299d59817db8b1bbb20425ddeb2c9ac8f197d40e0253074be |
 
-真实手机最终读取与缓存体验尚待反馈；设备端缓存加密用例仍为未完成状态，不以构建成功替代。
+用户真实手机反馈此前失败会话的内容能够显示，电脑没有再弹出命令行窗口，确认分页读取与隐藏启动的实际效果。发送/审批未测试；设备端缓存加密用例仍为未完成状态，不以构建或读取成功替代。
+
+后续：用户释放内存后，0.3.8在同一自有测试设备补做了缓存基础加密/隔离/损坏恢复及UI用例并通过，见[0.3.8记录](2026-10-30-full-text-v038.md)。这不回溯改变本轮0.3.7模拟器因阈值保护中止的原始结果。
 
 官方依据：[App Server存储历史分页](https://learn.chatgpt.com/docs/app-server#list-thread-items)。本轮经openaiDeveloperDocs搜索/读取确认turns/list与items/list的分页语义；实际实现使用本机已验证的turns/list，不把额外读取服务表述为原会话控制入口。

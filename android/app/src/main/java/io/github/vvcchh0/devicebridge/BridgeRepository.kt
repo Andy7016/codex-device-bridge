@@ -12,6 +12,7 @@ import org.json.JSONObject
 import java.util.UUID
 
 data class HistoryPage(val messages: List<ChatMessage>, val nextBefore: String?, val runtimeStatus: String, val cached: Boolean = false)
+data class MessagePart(val id: String, val text: String, val nextPart: String?, val contentHash: String)
 
 class BridgeRepository(context: Context, private val transport: BridgeTransport = BridgeTransport()) {
     val profiles = ProfileStore(context)
@@ -68,9 +69,18 @@ class BridgeRepository(context: Context, private val transport: BridgeTransport 
         val list = result.getJSONArray("messages")
         val messages = (0 until list.length()).map { i ->
             val item = list.getJSONObject(i)
-            ChatMessage(item.getString("id"), item.getString("role"), item.getString("text"), item.optString("status"))
+            ChatMessage(item.getString("id"), item.getString("role"), item.getString("text"), item.optString("status"),
+                item.optString("nextPart").takeIf { !item.isNull("nextPart") && it.isNotEmpty() }, item.optInt("totalBytes"),
+                item.optString("contentHash"), (item.optJSONArray("questions")?.length() ?: 0) > 0)
         }
         return HistoryPage(messages, if (result.isNull("nextBefore")) null else result.getString("nextBefore"), result.optString("runtimeStatus", "unknown"))
+    }
+
+    fun message(profile: ConnectionProfile, label: String, cursor: String): MessagePart {
+        val result = transport.request(profile, "message", JSONObject().put("thread", label).put("cursor", cursor))
+        val id = result.getString("id")
+        bindings[profile.id+":"+label]?.let { historyCache.appendMessage(profile.id, it, id, cursor, result) }
+        return MessagePart(id, result.getString("text"), result.optString("nextPart").takeIf { !result.isNull("nextPart") && it.isNotEmpty() }, result.getString("contentHash"))
     }
 
     @Synchronized

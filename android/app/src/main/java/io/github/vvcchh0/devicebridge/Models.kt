@@ -12,7 +12,8 @@ data class SessionInfo(
     val sessionKey: String = "",
 )
 
-data class ChatMessage(val id: String, val role: String, val text: String, val status: String = "")
+data class ChatMessage(val id: String, val role: String, val text: String, val status: String = "",
+    val nextPart: String? = null, val totalBytes: Int = 0, val contentHash: String = "", val hasQuestions: Boolean = false)
 
 data class PendingOperation(
     val id: String,
@@ -65,4 +66,5 @@ data class UiActions(
     val importPairingImage: () -> Unit = {},
     val checkPairing: () -> Unit = {},
     val discardPairing: () -> Unit = {},
+    val expandMessage: (String) -> Unit = {},
 )

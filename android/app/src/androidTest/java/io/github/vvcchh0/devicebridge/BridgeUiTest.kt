@@ -32,4 +32,15 @@ class BridgeUiTest {
         compose.onNodeWithTag("reconcile").performClick()
         assertEquals("original-id", reconciled)
     }
+
+    @Test fun longReplyOffersExplicitExpansionWithoutAnEllipsisCutoff() {
+        var expanded = ""
+        val state = UiState(profileName = "合成设备", connection = ConnectionStatus.CONNECTED,
+            sessions = listOf(SessionInfo("test", "合成会话")), selectedSession = "test",
+            messages = listOf(ChatMessage("long", "assistant", "长回复开头", nextPart = "cursor", totalBytes = 20000)))
+        compose.setContent { DeviceBridgeTheme { BridgeApp(state, actions().copy(expandMessage = { expanded = it })) } }
+        compose.onNodeWithTag("expand-message-long").performClick()
+        assertEquals("long", expanded)
+        compose.onNodeWithText("长回复开头").assertExists()
+    }
 }
