@@ -1,5 +1,6 @@
 package io.github.vvcchh0.devicebridge.ui
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -7,8 +8,11 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -34,16 +39,23 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -56,25 +68,30 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.vvcchh0.devicebridge.ChatMessage
 import io.github.vvcchh0.devicebridge.ConnectionStatus
 import io.github.vvcchh0.devicebridge.PendingOperation
+import io.github.vvcchh0.devicebridge.R
 import io.github.vvcchh0.devicebridge.SessionInfo
 import io.github.vvcchh0.devicebridge.UiActions
 import io.github.vvcchh0.devicebridge.UiState
 import io.github.vvcchh0.devicebridge.data.PairingPhase
 
-private enum class BridgePage(val title: String, val symbol: String) {
-    CHAT("会话", "聊"),
-    DEVICE("设备", "连"),
-    ACTIVITY("动态", "记"),
+private enum class BridgePage(val title: String, @param:DrawableRes val icon: Int) {
+    CHAT("会话", R.drawable.ic_nav_chat),
+    DEVICE("设备", R.drawable.ic_nav_device),
+    ACTIVITY("动态", R.drawable.ic_nav_activity),
 }
 
 @Composable
@@ -89,7 +106,16 @@ fun BridgeApp(state: UiState, actions: UiActions) {
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { BridgeHeader(state = state) },
+        topBar = {
+            BridgeHeader(
+                state = state,
+                page = page,
+                sessions = supportedSessions,
+                selectedSession = selectedSession,
+                onSelectSession = actions.selectSession,
+                onRefresh = actions.refresh,
+            )
+        },
         bottomBar = {
             Column(
                 modifier = Modifier
@@ -136,9 +162,7 @@ fun BridgeApp(state: UiState, actions: UiActions) {
                 BridgePage.CHAT -> ChatPage(
                     state = state,
                     actions = actions,
-                    sessions = supportedSessions,
                     selectedSession = selectedSession,
-                    onSelectSession = actions.selectSession,
                     modifier = Modifier.weight(1f),
                 )
                 BridgePage.DEVICE -> DevicePage(
@@ -180,82 +204,161 @@ fun BridgeApp(state: UiState, actions: UiActions) {
 }
 
 @Composable
-private fun BridgeHeader(state: UiState) {
+private fun BridgeHeader(
+    state: UiState,
+    page: BridgePage,
+    sessions: List<SessionInfo>,
+    selectedSession: SessionInfo?,
+    onSelectSession: (String) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    val connected = isConnected(state.connection)
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
-            .statusBarsPadding()
-            .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 14.dp),
+            .statusBarsPadding(),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(15.dp))
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "桥",
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    fontSize = 23.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "桌面桥接",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text = "访问已授权的 Codex 会话",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            ConnectionBadge(state.connection)
-        }
-        Spacer(Modifier.height(14.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer)
-                .padding(horizontal = 14.dp, vertical = 11.dp)
-                .semantics {
-                    contentDescription = "设备连接状态：${connectionLabel(state.connection)}"
-                },
+                .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(connectionDotColor(state.connection)),
-            )
-            Spacer(Modifier.width(9.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                if (page == BridgePage.CHAT) {
+                    SessionPicker(
+                        sessions = sessions,
+                        selectedSession = selectedSession,
+                        enabled = sessions.isNotEmpty() && !state.busy,
+                        onSelectSession = onSelectSession,
+                    )
+                } else {
+                    Text(
+                        text = if (page == BridgePage.DEVICE) "设备连接" else "操作动态",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                ConnectionLine(state)
+            }
+            if (page == BridgePage.CHAT) {
+                IconButton(
+                    onClick = onRefresh,
+                    enabled = !state.busy && connected,
+                    modifier = Modifier
+                        .testTag("refresh")
+                        .semantics { contentDescription = if (state.busy) "同步中" else "刷新会话" },
+                ) {
+                    if (state.busy) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(painterResource(R.drawable.ic_refresh), contentDescription = null)
+                    }
+                }
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+@Composable
+private fun ConnectionLine(state: UiState) {
+    val profile = when {
+        state.demo || state.connection == ConnectionStatus.DEMO -> "合成演示环境"
+        state.profileName.isNullOrBlank() -> "尚未配置设备档案"
+        else -> state.profileName.orEmpty()
+    }
+    Row(
+        modifier = Modifier.semantics {
+            contentDescription = "设备连接状态：${connectionLabel(state.connection)}"
+        },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(connectionDotColor(state.connection)),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = buildString {
+                append(profile)
+                append(" · ")
+                append(connectionLabel(state.connection))
+                if (state.lastSync != null) append(" · 同步于 ${state.lastSync}")
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun SessionPicker(
+    sessions: List<SessionInfo>,
+    selectedSession: SessionInfo?,
+    enabled: Boolean,
+    onSelectSession: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(enabled = enabled) { expanded = true }
+                .testTag("session-picker")
+                .semantics {
+                    contentDescription = selectedSession?.let { "切换会话，当前为${it.title}" } ?: "选择 Codex 会话"
+                }
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                text = when {
-                    state.demo || state.connection == ConnectionStatus.DEMO -> "合成演示环境"
-                    state.profileName.isNullOrBlank() -> "尚未配置设备档案"
-                    else -> state.profileName.orEmpty()
-                },
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                text = selectedSession?.title ?: if (sessions.isEmpty()) "暂无 Codex 会话" else "选择会话",
+                modifier = Modifier.weight(1f, fill = false),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = connectionLabel(state.connection),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                fontWeight = FontWeight.SemiBold,
-            )
+            if (sessions.isNotEmpty()) {
+                Icon(
+                    painterResource(R.drawable.ic_expand_more),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            sessions.forEach { session ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                session.title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = if (session == selectedSession) FontWeight.SemiBold else null,
+                            )
+                            Text(
+                                session.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelectSession(session.label)
+                    },
+                    modifier = Modifier.testTag("session-option-${sessions.indexOf(session)}"),
+                )
+            }
         }
     }
 }
@@ -275,16 +378,22 @@ private fun ConnectionBadge(connection: ConnectionStatus) {
         ConnectionStatus.ERROR -> MaterialTheme.colorScheme.onErrorContainer
         ConnectionStatus.DISCONNECTED -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Surface(
-        color = container,
-        shape = RoundedCornerShape(50),
+    StatusPill(
+        text = connectionLabel(connection),
+        container = container,
+        content = content,
         modifier = Modifier.semantics {
             contentDescription = "设备状态：${connectionLabel(connection)}"
         },
-    ) {
+    )
+}
+
+@Composable
+private fun StatusPill(text: String, container: Color, content: Color, modifier: Modifier = Modifier) {
+    Surface(color = container, shape = CircleShape, modifier = modifier) {
         Text(
-            text = connectionLabel(connection),
-            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+            text = text,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelMedium,
             color = content,
             fontWeight = FontWeight.SemiBold,
@@ -295,46 +404,20 @@ private fun ConnectionBadge(connection: ConnectionStatus) {
 @Composable
 private fun BottomNavigation(current: BridgePage, onSelect: (BridgePage) -> Unit) {
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    // The enclosing column already applies navigation bar insets.
+    NavigationBar(
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        windowInsets = WindowInsets(0, 0, 0, 0),
     ) {
         BridgePage.entries.forEach { item ->
-            val selected = current == item
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { onSelect(item) }
-                    .testTag("nav-${item.name.lowercase()}"),
-                color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                shape = RoundedCornerShape(16.dp),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 7.dp)
-                        .semantics {
-                            contentDescription = if (selected) "${item.title}，当前页面" else "打开${item.title}页面"
-                        },
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(
-                        text = item.symbol,
-                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        text = item.title,
-                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
-            }
+            NavigationBarItem(
+                selected = current == item,
+                onClick = { onSelect(item) },
+                icon = { Icon(painterResource(item.icon), contentDescription = null) },
+                label = { Text(item.title) },
+                modifier = Modifier.testTag("nav-${item.name.lowercase()}"),
+            )
         }
     }
 }
@@ -343,199 +426,127 @@ private fun BottomNavigation(current: BridgePage, onSelect: (BridgePage) -> Unit
 private fun ChatPage(
     state: UiState,
     actions: UiActions,
-    sessions: List<SessionInfo>,
     selectedSession: SessionInfo?,
-    onSelectSession: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
+    val connected = isConnected(state.connection)
+    val showLoadOlder = state.hasMoreHistory && connected
+    val leadingItems = if (showLoadOlder) 1 else 0
     var displayedLast by remember(state.selectedSession) { mutableStateOf<String?>(null) }
     val newest = state.messages.lastOrNull()?.id
     LaunchedEffect(state.selectedSession, newest) {
         if (newest != null && newest != displayedLast) {
-            val nearEnd = (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= state.messages.size - 3
-            if (displayedLast == null || nearEnd) listState.animateScrollToItem(state.messages.lastIndex)
+            val nearEnd = (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >=
+                state.messages.size + leadingItems - 3
+            if (displayedLast == null || nearEnd) listState.animateScrollToItem(state.messages.lastIndex + leadingItems)
             displayedLast = newest
         }
     }
-    Column(modifier = modifier.fillMaxSize()) {
-        SessionToolbar(
-            sessions = sessions,
-            selectedSession = selectedSession,
-            connected = isConnected(state.connection),
-            busy = state.busy,
-            hasMoreHistory = state.hasMoreHistory,
-            onSelectSession = onSelectSession,
-            onRefresh = actions.refresh,
-            onLoadOlder = actions.loadOlder,
-        )
-        if (state.lastSync != null) {
-            Text(
-                text = "最近同步：${state.lastSync}",
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .weight(1f)
-                .testTag("conversation-list"),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (state.messages.isEmpty()) {
-                item(key = "conversation-empty") {
-                    EmptyConversation(hasSession = selectedSession != null, connected = isConnected(state.connection))
-                }
-            } else {
-                items(state.messages, key = { "message-${it.id}" }) { message ->
-                    ChatMessageBubble(message, canExpand = !state.busy && isConnected(state.connection), onExpand = { actions.expandMessage(message.id) })
-                }
-            }
-            val visibleOperations = state.operations.filter { op ->
-                needsReconcile(op) && (selectedSession == null || op.session == selectedSession.label)
-            }
-            if (visibleOperations.isNotEmpty()) {
-                item(key = "recent-operations-title") {
-                    Text(
-                        text = "发送与回复状态",
-                        modifier = Modifier.padding(top = 4.dp, start = 4.dp),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-                items(visibleOperations, key = { "operation-${it.id}" }) { operation ->
-                    OperationCard(
-                        operation = operation,
-                        canReconcile = needsReconcile(operation),
-                        onReconcile = { actions.reconcile(operation.id) },
-                        busy = state.busy,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SessionToolbar(
-    sessions: List<SessionInfo>,
-    selectedSession: SessionInfo?,
-    connected: Boolean,
-    busy: Boolean,
-    hasMoreHistory: Boolean,
-    onSelectSession: (String) -> Unit,
-    onRefresh: () -> Unit,
-    onLoadOlder: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    LazyColumn(
+        state = listState,
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("conversation-list"),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Box(modifier = Modifier.weight(1f)) {
-            OutlinedButton(
-                onClick = { expanded = true },
-                enabled = sessions.isNotEmpty() && !busy,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("session-picker")
-                    .semantics {
-                        contentDescription = selectedSession?.let { "切换会话，当前为${it.title}" } ?: "选择 Codex 会话"
-                    },
-            ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = selectedSession?.title ?: if (sessions.isEmpty()) "暂无 Codex 会话" else "选择会话",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = selectedSession?.label ?: "Codex",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                sessions.forEach { session ->
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text(session.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    session.label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        },
-                        onClick = {
-                            expanded = false
-                            onSelectSession(session.label)
-                        },
-                        modifier = Modifier.testTag("session-option-${sessions.indexOf(session)}"),
-                    )
+        if (showLoadOlder) {
+            item(key = "load-older") {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    OutlinedButton(
+                        onClick = actions.loadOlder,
+                        enabled = !state.busy && connected,
+                        modifier = Modifier
+                            .height(34.dp)
+                            .testTag("load-older-toolbar"),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    ) { Text("加载更早消息", style = MaterialTheme.typography.labelMedium) }
                 }
             }
         }
-        OutlinedButton(
-            onClick = onRefresh,
-            enabled = !busy && connected,
-            modifier = Modifier.testTag("refresh"),
-        ) { Text(if (busy) "同步中" else "刷新") }
-    }
-    if (hasMoreHistory && connected) {
-        TextButton(
-            onClick = onLoadOlder,
-            enabled = !busy && connected,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("load-older-toolbar"),
-        ) { Text("加载更早消息") }
+        if (state.messages.isEmpty()) {
+            item(key = "conversation-empty") {
+                EmptyConversation(hasSession = selectedSession != null, connected = connected)
+            }
+        } else {
+            items(state.messages, key = { "message-${it.id}" }) { message ->
+                ChatMessageBubble(message, canExpand = !state.busy && connected, onExpand = { actions.expandMessage(message.id) })
+            }
+        }
+        val visibleOperations = state.operations.filter { op ->
+            needsReconcile(op) && (selectedSession == null || op.session == selectedSession.label)
+        }
+        if (visibleOperations.isNotEmpty()) {
+            item(key = "recent-operations-title") {
+                Text(
+                    text = "发送与回复状态",
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            items(visibleOperations, key = { "operation-${it.id}" }) { operation ->
+                OperationCard(
+                    operation = operation,
+                    canReconcile = needsReconcile(operation),
+                    onReconcile = { actions.reconcile(operation.id) },
+                    busy = state.busy,
+                    horizontalPadding = 0.dp,
+                )
+            }
+        }
     }
 }
 
 @Composable
 private fun EmptyConversation(hasSession: Boolean, connected: Boolean) {
-    Card(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 22.dp),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            .padding(horizontal = 24.dp, vertical = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 22.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = if (!connected) "设备尚未连接" else if (!hasSession) "选择一个会话" else "这里还没有消息",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                text = when {
-                    !connected -> "导入可信的设备档案并连接后，才能读取受支持的 Codex 会话。"
-                    !hasSession -> "连接成功后，从会话列表选择一个 Codex 会话。"
-                    else -> "此页面只显示桌面端返回的内容，不会生成模拟的对话消息。"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        IconBadge(
+            icon = if (connected) R.drawable.ic_nav_chat else R.drawable.ic_nav_device,
+            size = 56.dp,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = if (!connected) "设备尚未连接" else if (!hasSession) "选择一个会话" else "这里还没有消息",
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = when {
+                !connected -> "导入可信的设备档案并连接后，才能读取受支持的 Codex 会话。"
+                !hasSession -> "连接成功后，点击顶部标题选择一个 Codex 会话。"
+                else -> "此页面只显示桌面端返回的内容，不会生成模拟的对话消息。"
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun IconBadge(@DrawableRes icon: Int, size: Dp, contentDescription: String? = null) {
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primaryContainer),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painterResource(icon),
+            contentDescription = contentDescription,
+            modifier = Modifier.size(size * 0.5f),
+            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+        )
     }
 }
 
@@ -543,20 +554,28 @@ private fun EmptyConversation(hasSession: Boolean, connected: Boolean) {
 private fun ChatMessageBubble(message: ChatMessage, canExpand: Boolean = false, onExpand: () -> Unit = {}) {
     val role = message.role.lowercase()
     if (role == "tool" || role == "tool_result" || role == "tool-result") {
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(15.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 38.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
+            Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                 Text(
                     text = "工具记录 · 只读",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(5.dp))
-                SelectionContainer { Text(message.text, style = MaterialTheme.typography.bodyMedium) }
+                Spacer(Modifier.height(4.dp))
+                SelectionContainer {
+                    Text(
+                        message.text,
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
                 if (message.status.isNotBlank()) {
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -567,62 +586,73 @@ private fun ChatMessageBubble(message: ChatMessage, canExpand: Boolean = false, 
                 }
             }
         }
-    } else {
-        val isUser = role == "user"
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
-        ) {
-            Card(
-                modifier = Modifier.fillMaxWidth(if (isUser) 0.88f else 0.96f),
-                shape = RoundedCornerShape(
-                    topStart = 18.dp,
-                    topEnd = 18.dp,
-                    bottomEnd = if (isUser) 6.dp else 18.dp,
-                    bottomStart = if (isUser) 18.dp else 6.dp,
-                ),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-                ),
-                border = if (isUser) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 15.dp, vertical = 12.dp)) {
-                    Text(
-                        text = if (isUser) "你" else "Codex",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f) else MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.height(5.dp))
-                    SelectionContainer {
-                        Text(
-                            text = message.text,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    if (message.nextPart != null) {
-                        TextButton(onClick = onExpand, enabled = canExpand,
-                            colors = ButtonDefaults.textButtonColors(contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary),
-                            modifier = Modifier.testTag("expand-message-${message.id}")) {
-                            Text("展开全文 · 约${(message.totalBytes+1023)/1024} KB")
+    } else if (role == "user") {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Box(modifier = Modifier.fillMaxWidth(0.86f), contentAlignment = Alignment.CenterEnd) {
+                Surface(
+                    shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 6.dp, bottomStart = 20.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.semantics { contentDescription = "你发送的消息" },
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        SelectionContainer {
+                            Text(message.text, style = MaterialTheme.typography.bodyLarge)
                         }
-                    }
-                    if (message.hasQuestions) {
-                        Text("提问记录；当前仅显示内容，作答入口尚未开放。", style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    if (message.status.isNotBlank()) {
-                        Spacer(Modifier.height(5.dp))
-                        Text(
-                            text = turnLabel(message.status),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (isUser) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        MessageFooter(message, canExpand, onExpand, accent = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
         }
+    } else {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            IconBadge(icon = R.drawable.ic_codex, size = 28.dp, contentDescription = "Codex")
+            Column(modifier = Modifier.weight(1f).padding(top = 2.dp)) {
+                SelectionContainer {
+                    Text(
+                        message.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+                MessageFooter(message, canExpand, onExpand, accent = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageFooter(message: ChatMessage, canExpand: Boolean, onExpand: () -> Unit, accent: Color) {
+    if (message.nextPart != null) {
+        TextButton(
+            onClick = onExpand,
+            enabled = canExpand,
+            colors = ButtonDefaults.textButtonColors(contentColor = accent),
+            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
+            modifier = Modifier.testTag("expand-message-${message.id}"),
+        ) {
+            Icon(painterResource(R.drawable.ic_expand_more), contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(4.dp))
+            Text("展开全文 · 约${(message.totalBytes + 1023) / 1024} KB", style = MaterialTheme.typography.labelLarge)
+        }
+    }
+    if (message.hasQuestions) {
+        Text(
+            "提问记录；当前仅显示内容，作答入口尚未开放。",
+            modifier = Modifier.padding(top = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.tertiary,
+        )
+    }
+    // A completed turn is the normal case; only surface states that need attention.
+    if (message.status.isNotBlank() && !isCompletedTurn(message.status)) {
+        Text(
+            text = turnLabel(message.status),
+            modifier = Modifier.padding(top = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = turnColor(message.status),
+        )
     }
 }
 
@@ -648,117 +678,140 @@ private fun Composer(
     }
     val draftAllowed = outgoingText.isNotBlank() && (freeText || fixedMessages.contains(outgoingText))
     val sendEnabled = composerEnabled && draftAllowed && !duplicateUnknown
+    val submit = {
+        if (sendEnabled) {
+            onSend(outgoingText)
+            keyboard?.hide()
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 14.dp, vertical = 9.dp)
+            .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 6.dp)
             .testTag("composer"),
-        verticalArrangement = Arrangement.spacedBy(7.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (session == null || !connected || !granted) {
-            Text(
-                text = when {
-                    !connected -> "设备未连接，发送功能已停用"
-                    session == null -> "请选择 Codex 会话"
-                    !granted -> "此会话没有发送授权"
-                    else -> ""
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else if (fixedMessages.isNotEmpty() || !freeText) {
-            Text(
-                text = if (freeText) "授权消息示例" else "仅可发送桌面端授权的固定消息",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (fixedMessages.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                ) {
-                    fixedMessages.forEachIndexed { index, message ->
-                        AssistChip(
-                            onClick = { onDraftChanged(message) },
-                            enabled = composerEnabled,
-                            label = {
-                                Text(
-                                    message,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            },
-                            modifier = Modifier.testTag("allowed-message-$index"),
-                        )
-                    }
+        if (session != null && connected && granted && fixedMessages.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                fixedMessages.forEachIndexed { index, message ->
+                    AssistChip(
+                        onClick = { onDraftChanged(message) },
+                        enabled = composerEnabled,
+                        shape = CircleShape,
+                        label = {
+                            Text(
+                                message,
+                                modifier = Modifier.widthIn(max = 240.dp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        modifier = Modifier.testTag("allowed-message-$index"),
+                    )
                 }
-            } else if (!freeText) {
-                Text(
-                    text = "当前没有可发送的授权消息",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = onDraftChanged,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag("message-input")
-                    .semantics {
-                        contentDescription = if (freeText) "输入消息" else "已授权消息；请使用上方消息选项"
-                    },
-                enabled = composerEnabled,
-                readOnly = !freeText,
-                placeholder = {
-                    Text(if (freeText) "写一条消息…" else "选择一条授权消息")
+        OutlinedTextField(
+            value = draft,
+            onValueChange = onDraftChanged,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("message-input")
+                .semantics {
+                    contentDescription = if (freeText) "输入消息" else "已授权消息；请使用上方消息选项"
                 },
-                maxLines = 3,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(
-                    onSend = {
-                        if (sendEnabled) {
-                            onSend(outgoingText)
-                            keyboard?.hide()
-                        }
+            enabled = composerEnabled,
+            readOnly = !freeText,
+            shape = RoundedCornerShape(26.dp),
+            textStyle = MaterialTheme.typography.bodyLarge,
+            placeholder = {
+                Text(
+                    text = when {
+                        !connected -> "设备未连接，发送功能已停用"
+                        session == null -> "请选择 Codex 会话"
+                        !granted -> "此会话没有发送授权"
+                        freeText -> "写一条消息…"
+                        fixedMessages.isEmpty() -> "当前没有可发送的授权消息"
+                        else -> "仅可发送上方桌面端授权的消息"
                     },
-                ),
-            )
-            Button(
-                onClick = {
-                    if (sendEnabled) {
-                        onSend(outgoingText)
-                        keyboard?.hide()
-                    }
-                },
-                enabled = sendEnabled,
-                modifier = Modifier
-                    .height(56.dp)
-                    .testTag("send-message")
-                    .semantics { contentDescription = "发送授权消息" },
-            ) {
-                Text("发送")
-            }
-        }
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            trailingIcon = {
+                FilledIconButton(
+                    onClick = submit,
+                    enabled = sendEnabled,
+                    modifier = Modifier
+                        .padding(end = 4.dp)
+                        .size(40.dp)
+                        .testTag("send-message")
+                        .semantics { contentDescription = "发送授权消息" },
+                ) {
+                    Icon(painterResource(R.drawable.ic_send), contentDescription = null, modifier = Modifier.size(20.dp))
+                }
+            },
+            colors = OutlinedTextFieldDefaults.colors(
+                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                disabledBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                disabledPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            ),
+            maxLines = 4,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            keyboardActions = KeyboardActions(onSend = { submit() }),
+        )
         if (duplicateUnknown) {
             Text(
                 text = "这条消息的投递结果待核对。先到“动态”核对状态，避免重复发送。",
+                modifier = Modifier.padding(horizontal = 6.dp),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.tertiary,
             )
         }
     }
+}
+
+@Composable
+private fun SectionCard(
+    modifier: Modifier = Modifier,
+    container: Color = MaterialTheme.colorScheme.surface,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = container),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            content = content,
+        )
+    }
+}
+
+@Composable
+private fun PageIntro(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 16.dp),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable
@@ -774,218 +827,222 @@ private fun DevicePage(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SectionTitle(
-            title = "设备连接",
-            subtitle = "管理本机与桌面端之间的受信连接。",
-        )
+        PageIntro("管理本机与桌面端之间的受信连接。")
+        SectionCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconBadge(icon = R.drawable.ic_nav_device, size = 44.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("当前档案", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        text = when {
+                            state.demo || state.connection == ConnectionStatus.DEMO -> "合成演示档案"
+                            state.profileName.isNullOrBlank() -> "尚未导入"
+                            else -> state.profileName.orEmpty()
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                ConnectionBadge(state.connection)
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    Text("设备端点", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SelectionContainer {
+                        Text(
+                            text = state.endpoint,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("device-endpoint"),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    if (state.lastSync != null) {
+                        Text(
+                            text = "最近同步：${state.lastSync}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = actions.importProfile,
+                    enabled = !state.busy,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("import-profile"),
+                ) { Text("导入档案", maxLines = 1) }
+                Button(
+                    onClick = actions.connect,
+                    enabled = !state.busy && !isConnected(state.connection) && !state.profileName.isNullOrBlank(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("connect"),
+                ) { Text(if (state.connection == ConnectionStatus.CONNECTING) "连接中" else "连接设备", maxLines = 1) }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = actions.disconnect,
+                    enabled = !state.busy && (state.connection == ConnectionStatus.CONNECTED || state.connection == ConnectionStatus.CONNECTING),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("disconnect"),
+                ) { Text("断开连接") }
+                TextButton(
+                    onClick = onForget,
+                    enabled = !state.busy && !state.profileName.isNullOrBlank(),
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("forget-profile"),
+                ) { Text("忘记档案") }
+            }
+        }
         PairingCard(state, actions)
-        Card(
+        SectionCard {
+            Text("使用须知", style = MaterialTheme.typography.titleSmall)
+            GuidanceItem(
+                title = "导入前请确认来源",
+                body = "设备档案包含设备凭据。只导入由你在本机生成并且信任的档案文件。",
+                emphasized = true,
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            GuidanceItem(
+                title = "当前能力范围",
+                body = "此桥接面向受支持的 Codex 桌面会话。ChatGPT 会话、模型切换、设置管理、审批操作、文件与附件目前不支持。",
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            GuidanceItem(
+                title = "桌面端需要在线",
+                body = "连接状态和会话内容来自桌面端桥接服务；离线时不会显示为已连接。",
+            )
+        }
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(22.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Column(
-                modifier = Modifier.padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(11.dp),
+            TextButton(
+                onClick = actions.showDemo,
+                enabled = !state.busy && !state.demo && state.connection != ConnectionStatus.DEMO,
+                modifier = Modifier.testTag("show-demo"),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("当前档案", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            text = when {
-                                state.demo || state.connection == ConnectionStatus.DEMO -> "合成演示档案"
-                                state.profileName.isNullOrBlank() -> "尚未导入"
-                                else -> state.profileName.orEmpty()
-                            },
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                    ConnectionBadge(state.connection)
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Text("设备端点", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SelectionContainer {
-                    Text(
-                        text = state.endpoint,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("device-endpoint"),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                if (state.lastSync != null) {
-                    Text(
-                        text = "最近同步：${state.lastSync}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(
-                        onClick = actions.importProfile,
-                        enabled = !state.busy,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("import-profile"),
-                    ) { Text("导入档案", maxLines = 1) }
-                    Button(
-                        onClick = actions.connect,
-                        enabled = !state.busy && !isConnected(state.connection) && !state.profileName.isNullOrBlank(),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("connect"),
-                    ) { Text(if (state.connection == ConnectionStatus.CONNECTING) "连接中" else "连接设备", maxLines = 1) }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(
-                        onClick = actions.disconnect,
-                        enabled = !state.busy && (state.connection == ConnectionStatus.CONNECTED || state.connection == ConnectionStatus.CONNECTING),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("disconnect"),
-                    ) { Text("断开连接") }
-                    OutlinedButton(
-                        onClick = onForget,
-                        enabled = !state.busy && !state.profileName.isNullOrBlank(),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("forget-profile"),
-                    ) { Text("忘记档案") }
-                }
+                Text("查看合成演示数据")
             }
+            Text(
+                text = "演示内容为合成示例，不代表真实设备、账户或会话。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
         }
-
-        InfoCard(
-            title = "导入前请确认来源",
-            body = "设备档案包含设备凭据。只导入由你在本机生成并且信任的档案文件。",
-            emphasized = true,
-        )
-        InfoCard(
-            title = "当前能力范围",
-            body = "此桥接面向受支持的 Codex 桌面会话。ChatGPT 会话、模型切换、设置管理、审批操作、文件与附件目前不支持。",
-        )
-        InfoCard(
-            title = "桌面端需要在线",
-            body = "连接状态和会话内容来自桌面端桥接服务；离线时不会显示为已连接。",
-        )
-        Button(
-            onClick = actions.showDemo,
-            enabled = !state.busy && !state.demo && state.connection != ConnectionStatus.DEMO,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .testTag("show-demo"),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-            ),
-        ) {
-            Text("查看合成演示数据")
-        }
-        Text(
-            text = "演示内容为合成示例，不代表真实设备、账户或会话。",
-            modifier = Modifier.padding(horizontal = 20.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         Spacer(Modifier.height(12.dp))
     }
 }
 
 @Composable
+private fun GuidanceItem(title: String, body: String, emphasized: Boolean = false) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = if (emphasized) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface,
+        )
+        Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
 private fun PairingCard(state: UiState, actions: UiActions) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(11.dp),
-        ) {
-            Text("与桌面端配对", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(
-                "扫描桌面端生成的一次性二维码，或粘贴二维码文本。批准必须在电脑上完成。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedTextField(
-                value = state.pairingInput,
-                onValueChange = actions.updatePairingInput,
+    SectionCard {
+        Text("与桌面端配对", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "扫描桌面端生成的一次性二维码，或粘贴二维码文本。批准必须在电脑上完成。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = actions.scanPairingQr,
                 enabled = !state.busy,
-                modifier = Modifier.fillMaxWidth().testTag("pairing-qr-input"),
-                label = { Text("配对二维码文本") },
-                placeholder = { Text("dbpair:…") },
-                minLines = 2,
-                maxLines = 4,
-                supportingText = { Text("二维码包含短期配对凭据；仅从你信任的电脑获取。") },
+                modifier = Modifier.weight(1f).testTag("scan-pairing-qr"),
+            ) { Text("扫描二维码", maxLines = 1) }
+            OutlinedButton(
+                onClick = actions.importPairingImage,
+                enabled = !state.busy,
+                modifier = Modifier.weight(1f).testTag("import-pairing-image"),
+            ) { Text("读取二维码图片", maxLines = 1) }
+        }
+        OutlinedTextField(
+            value = state.pairingInput,
+            onValueChange = actions.updatePairingInput,
+            enabled = !state.busy,
+            modifier = Modifier.fillMaxWidth().testTag("pairing-qr-input"),
+            label = { Text("配对二维码文本") },
+            placeholder = { Text("dbpair:…") },
+            shape = RoundedCornerShape(14.dp),
+            minLines = 2,
+            maxLines = 4,
+            supportingText = { Text("二维码包含短期配对凭据；仅从你信任的电脑获取。") },
+        )
+        Button(
+            onClick = actions.beginPairing,
+            enabled = !state.busy && state.pairingInput.isNotBlank(),
+            modifier = Modifier.fillMaxWidth().testTag("begin-pairing"),
+        ) { Text(if (state.busy) "正在处理…" else "开始配对") }
+
+        when (state.pairingPhase) {
+            PairingPhase.STARTING -> PairingStatusPanel(
+                title = "正在联系 ${state.pairingHostName.orEmpty()}",
+                body = "请求身份和恢复记录已保存在本机。再次开始会继续使用同一请求。",
+                code = null,
             )
+            PairingPhase.WAITING_FOR_APPROVAL -> PairingStatusPanel(
+                title = "等待电脑批准：${state.pairingHostName.orEmpty()}",
+                body = "请核对这组确认码是否与电脑上显示的一致，再在电脑上批准设备及其权限。",
+                code = state.pairingConfirmationCode,
+            )
+            PairingPhase.APPROVED -> PairingStatusPanel(
+                title = "已由电脑批准",
+                body = "连接资料已保存。确认码仅用于本次配对核对；连接后仍需你手动发送消息。",
+                code = state.pairingConfirmationCode,
+            )
+            PairingPhase.DENIED -> PairingStatusPanel(
+                title = "配对已被拒绝",
+                body = "电脑没有授权此设备。需要时请在电脑端重新生成新的配对二维码。",
+                code = state.pairingConfirmationCode,
+            )
+            null -> Unit
+        }
+
+        if (state.pairingPhase == PairingPhase.STARTING || state.pairingPhase == PairingPhase.WAITING_FOR_APPROVAL) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
-                    onClick = actions.scanPairingQr,
+                    onClick = actions.checkPairing,
                     enabled = !state.busy,
-                    modifier = Modifier.weight(1f).testTag("scan-pairing-qr"),
-                ) { Text("扫描二维码", maxLines = 1) }
-                OutlinedButton(
-                    onClick = actions.importPairingImage,
+                    modifier = Modifier.weight(1f).testTag("check-pairing"),
+                ) { Text("检查批准状态") }
+                TextButton(
+                    onClick = actions.discardPairing,
                     enabled = !state.busy,
-                    modifier = Modifier.weight(1f).testTag("import-pairing-image"),
-                ) { Text("读取二维码图片", maxLines = 1) }
-            }
-            Button(
-                onClick = actions.beginPairing,
-                enabled = !state.busy && state.pairingInput.isNotBlank(),
-                modifier = Modifier.fillMaxWidth().testTag("begin-pairing"),
-            ) { Text(if (state.busy) "正在处理…" else "开始配对") }
-
-            when (state.pairingPhase) {
-                PairingPhase.STARTING -> PairingStatusPanel(
-                    title = "正在联系 ${state.pairingHostName.orEmpty()}",
-                    body = "请求身份和恢复记录已保存在本机。再次开始会继续使用同一请求。",
-                    code = null,
-                )
-                PairingPhase.WAITING_FOR_APPROVAL -> PairingStatusPanel(
-                    title = "等待电脑批准：${state.pairingHostName.orEmpty()}",
-                    body = "请核对这组确认码是否与电脑上显示的一致，再在电脑上批准设备及其权限。",
-                    code = state.pairingConfirmationCode,
-                )
-                PairingPhase.APPROVED -> PairingStatusPanel(
-                    title = "已由电脑批准",
-                    body = "连接资料已保存。确认码仅用于本次配对核对；连接后仍需你手动发送消息。",
-                    code = state.pairingConfirmationCode,
-                )
-                PairingPhase.DENIED -> PairingStatusPanel(
-                    title = "配对已被拒绝",
-                    body = "电脑没有授权此设备。需要时请在电脑端重新生成新的配对二维码。",
-                    code = state.pairingConfirmationCode,
-                )
-                null -> Unit
-            }
-
-            if (state.pairingPhase == PairingPhase.STARTING || state.pairingPhase == PairingPhase.WAITING_FOR_APPROVAL) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(
-                        onClick = actions.checkPairing,
-                        enabled = !state.busy,
-                        modifier = Modifier.weight(1f).testTag("check-pairing"),
-                    ) { Text("检查批准状态") }
-                    TextButton(
-                        onClick = actions.discardPairing,
-                        enabled = !state.busy,
-                        modifier = Modifier.weight(1f).testTag("discard-pairing"),
-                    ) { Text("移除此请求") }
-                }
+                    modifier = Modifier.weight(1f).testTag("discard-pairing"),
+                ) { Text("移除此请求") }
             }
         }
     }
@@ -999,14 +1056,15 @@ private fun PairingStatusPanel(title: String, body: String, code: String?) {
         color = MaterialTheme.colorScheme.secondaryContainer,
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
             if (code != null) {
                 Text(
                     code,
                     modifier = Modifier.fillMaxWidth().testTag("pairing-code"),
-                    style = MaterialTheme.typography.headlineMedium,
-                    letterSpacing = 4.sp,
+                    style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Monospace),
+                    letterSpacing = 6.sp,
                     fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
@@ -1028,15 +1086,25 @@ private fun ActivityPage(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SectionTitle(
-            title = "操作动态",
-            subtitle = "投递状态与模型回复进度分别显示。",
-        )
+        PageIntro("投递状态与模型回复进度分别显示。")
         if (operations.isEmpty()) {
-            InfoCard(
-                title = "暂无发送记录",
-                body = "获得发送授权并发送消息后，这里会分别显示消息是否送达，以及模型是否完成回复。",
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 36.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                IconBadge(icon = R.drawable.ic_nav_activity, size = 56.dp)
+                Spacer(Modifier.height(4.dp))
+                Text("暂无发送记录", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "获得发送授权并发送消息后，这里会分别显示消息是否送达，以及模型是否完成回复。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
         } else {
             operations.forEachIndexed { index, operation ->
                 OperationCard(
@@ -1064,16 +1132,17 @@ private fun OperationCard(
     onReconcile: () -> Unit,
     busy: Boolean,
     modifier: Modifier = Modifier,
+    horizontalPadding: Dp = 16.dp,
 ) {
     Card(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = horizontalPadding),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(
-            modifier = Modifier.padding(15.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -1084,18 +1153,25 @@ private fun OperationCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = operation.state.toOperationStateLabel(),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = stateTextColor(operation.state),
-                )
+                val (container, content) = statePillColors(operation.state)
+                StatusPill(text = operation.state.toOperationStateLabel(), container = container, content = content)
             }
             SelectionContainer {
                 Text(operation.text, style = MaterialTheme.typography.bodyMedium)
             }
-            StatusLine(label = "消息投递", value = deliveryLabel(operation.state))
-            StatusLine(label = "模型回复", value = turnLabel(operation.turnStatus))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    StatusLine(label = "消息投递", value = deliveryLabel(operation.state))
+                    StatusLine(label = "模型回复", value = turnLabel(operation.turnStatus))
+                }
+            }
             if (canReconcile) {
                 Text(
                     text = "投递结果可能尚未确认。此操作只会读取当前状态。",
@@ -1135,33 +1211,14 @@ private fun StatusLine(label: String, value: String) {
 }
 
 @Composable
-private fun SectionTitle(title: String, subtitle: String) {
-    Column(
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 2.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
 private fun InfoCard(title: String, body: String, emphasized: Boolean = false) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (emphasized) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surface,
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    SectionCard(
+        container = if (emphasized) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surface,
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(
                 title,
                 style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
                 color = if (emphasized) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurface,
             )
             Text(
@@ -1285,14 +1342,27 @@ private fun turnLabel(rawStatus: String): String = when (normalizedStatus(rawSta
     else -> if (rawStatus.isBlank()) "暂无状态" else rawStatus
 }
 
+
+private fun isCompletedTurn(rawStatus: String): Boolean =
+    normalizedStatus(rawStatus) in setOf("completed", "complete", "finished", "succeeded", "已完成", "完成")
+
 @Composable
-private fun stateTextColor(state: String): Color = when (normalizedStatus(state)) {
-    "failed", "rejected", "error", "失败" -> MaterialTheme.colorScheme.error
-    "unknown", "uncertain", "indeterminate", "结果未知", "未知", "待核对" -> MaterialTheme.colorScheme.tertiary
-    "sent", "delivered", "accepted", "completed", "complete", "已送达", "完成" -> MaterialTheme.colorScheme.primary
-    else -> if (normalizedStatus(state).contains("unknown") || normalizedStatus(state).contains("uncertain")) {
-        MaterialTheme.colorScheme.tertiary
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
+private fun turnColor(rawStatus: String): Color = when (normalizedStatus(rawStatus)) {
+    "failed", "error", "失败", "interrupted", "cancelled", "canceled", "已取消" -> MaterialTheme.colorScheme.error
+    else -> MaterialTheme.colorScheme.tertiary
+}
+
+@Composable
+private fun statePillColors(state: String): Pair<Color, Color> {
+    val status = normalizedStatus(state)
+    val uncertain = status in setOf("unknown", "uncertain", "indeterminate", "结果未知", "未知", "待核对") ||
+        status.contains("unknown") || status.contains("uncertain")
+    return when {
+        status in setOf("failed", "rejected", "error", "失败") ->
+            MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
+        uncertain -> MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
+        status in setOf("sent", "delivered", "accepted", "completed", "complete", "已送达", "完成") ->
+            MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant
     }
 }

@@ -5,6 +5,7 @@ The project has not yet selected its own open-source license. Third-party compon
 | Component | Used by | Upstream |
 | --- | --- | --- |
 | AndroidX / Compose / Kotlin / kotlinx.coroutines | Android UI and lifecycle | [AndroidX](https://android.googlesource.com/platform/frameworks/support/), [Kotlin](https://github.com/JetBrains/kotlin), [coroutines](https://github.com/Kotlin/kotlinx.coroutines) |
+| Material Design icons (path data) | Android navigation and action icons (`ic_nav_*`, `ic_refresh`, `ic_send`, `ic_expand_more`, `ic_codex` drawables; Apache-2.0) | [upstream](https://github.com/google/material-design-icons) |
 | ZXing Android Embedded 4.3.0 | QR scanning | [upstream](https://github.com/journeyapps/zxing-android-embedded) |
 | Java-WebSocket 1.6.0 | Android WSS | [upstream](https://github.com/TooTallNate/Java-WebSocket) |
 | Python / Tcl/Tk | Windows interpreter and UI | [Python](https://www.python.org/), [Tcl/Tk](https://www.tcl.tk/) |

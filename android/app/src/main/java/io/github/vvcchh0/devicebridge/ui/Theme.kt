@@ -2,10 +2,13 @@ package io.github.vvcchh0.devicebridge.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 
 private val WarmIvory = Color(0xFFF5F2E9)
 private val Paper = Color(0xFFFFFEFA)
@@ -43,6 +46,11 @@ private val LightColors = lightColorScheme(
     onSurfaceVariant = MutedInk,
     outline = Color(0xFF899693),
     outlineVariant = Color(0xFFD3D9D2),
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color(0xFFFAF8F1),
+    surfaceContainer = Color(0xFFF2EFE6),
+    surfaceContainerHigh = Color(0xFFECE9DF),
+    surfaceContainerHighest = Color(0xFFE6E3D9),
 )
 
 private val DarkColors = darkColorScheme(
@@ -70,12 +78,33 @@ private val DarkColors = darkColorScheme(
     onSurfaceVariant = Color(0xFFC0CCC7),
     outline = Color(0xFF899692),
     outlineVariant = Color(0xFF46534F),
+    surfaceContainerLowest = Color(0xFF111716),
+    surfaceContainerLow = Color(0xFF192120),
+    surfaceContainer = Color(0xFF253030),
+    surfaceContainerHigh = Color(0xFF2C3837),
+    surfaceContainerHighest = Color(0xFF36423F),
+)
+
+// Material defaults are tuned for Latin text; mixed Chinese/English needs taller lines.
+private val Base = Typography()
+private val BridgeTypography = Typography(
+    headlineSmall = Base.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+    titleLarge = Base.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+    titleMedium = Base.titleMedium.copy(fontWeight = FontWeight.SemiBold, lineHeight = 24.sp),
+    titleSmall = Base.titleSmall.copy(fontWeight = FontWeight.SemiBold, lineHeight = 22.sp),
+    bodyLarge = Base.bodyLarge.copy(lineHeight = 26.sp, letterSpacing = 0.2.sp),
+    bodyMedium = Base.bodyMedium.copy(lineHeight = 22.sp, letterSpacing = 0.15.sp),
+    bodySmall = Base.bodySmall.copy(lineHeight = 18.sp),
+    labelLarge = Base.labelLarge.copy(lineHeight = 20.sp),
+    labelMedium = Base.labelMedium.copy(lineHeight = 18.sp),
+    labelSmall = Base.labelSmall.copy(lineHeight = 16.sp, letterSpacing = 0.2.sp),
 )
 
 @Composable
 fun DeviceBridgeTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
+        typography = BridgeTypography,
         content = content,
     )
 }
